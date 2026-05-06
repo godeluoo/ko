@@ -1,0 +1,16 @@
+{
+  "name": "nodejs-argo-singbox"，
+  "version": "1.0.0",
+  "description": "Node.js fixed Cloudflare Tunnel runner with sing-box and cloudflared",
+  "main": "index.js",
+  "author": "eooce",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "axios": "1.16.0",
+    "express": "5.2.1"
+  }
+}
