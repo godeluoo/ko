@@ -16,9 +16,9 @@ RUN apk add --no-cache \
     tar \
     gzip \
     jq \
-  && chmod +x index.js \
-  && npm install --omit=dev \
-  && npm cache clean --force
+    && chmod +x index.js \
+    && npm install --omit=dev \
+    && npm cache clean --force
 
 EXPOSE 3000/tcp
 
