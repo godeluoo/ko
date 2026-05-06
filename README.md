@@ -1,14 +1,4 @@
-# nodejs-argo sing-box 极速简化版
-
 这是基于 [eooce/nodejs-argo](https://github.com/eooce/nodejs-argo) 的最小改良版，并吸收 [fscarmen/sing-box](https://github.com/fscarmen/sing-box) 里和 sing-box、Cloudflare Argo、CFIP/CDN、WS TLS 订阅相关的优点。
-
-本项目的结合方式很简单：
-
-- eooce/nodejs-argo 的优点：PaaS / Node 玩具平台友好、少变量、单入口、自动节点、自动订阅。
-- fscarmen/sing-box 的优点：sing-box 核心、Cloudflare Argo / Tunnel 思路、CFIP 优选、VLESS / VMess / Trojan WS TLS。
-- 本项目只做：简单部署 + sing-box 核心 + Cloudflare 固定隧道 + CFIP 优选 + 小火箭 / v2rayN 订阅。
-
-不包含 Reality、Hysteria2、Tuic、AnyTLS、NaiveProxy、Warp、哪吒、Komari server、nginx、systemd、openrc，也不增加额外 npm 依赖。
 
 ## 最少必填环境变量
 
