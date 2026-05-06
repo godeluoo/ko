@@ -30,6 +30,9 @@ const EDGE_IP_VERSION = normalizeEdgeIpVersion(process.env.EDGE_IP_VERSION || 'a
 const FP = process.env.FP || 'chrome';
 const PUBLIC_SUB_DOMAIN = normalizeDomain(process.env.PUBLIC_SUB_DOMAIN || '');
 const FORCE_UPDATE = /^(1|true|yes|on)$/i.test(process.env.FORCE_UPDATE || '');
+const SPEED_MODE = parseBool(process.env.SPEED_MODE, true);
+const MULTI_MODE = parseBool(process.env.MULTI_MODE, false);
+const DIRECT_VLESS_MODE = SPEED_MODE && !MULTI_MODE;
 
 const RUN_DIR = path.resolve(FILE_PATH);
 const webPath = path.join(RUN_DIR, 'sing-box');
@@ -58,10 +61,21 @@ console.log(`[init] run directory: ${RUN_DIR}`);
 console.log(`[init] PORT=${PORT}, ARGO_PORT=${ARGO_PORT}`);
 console.log(`[init] tunnel mode=${tunnelMode}, protocol=${ARGO_PROTOCOL}, edge-ip-version=${EDGE_IP_VERSION}`);
 console.log(`[init] FORCE_UPDATE=${FORCE_UPDATE}`);
+console.log(`[init] SPEED_MODE=${SPEED_MODE}, MULTI_MODE=${MULTI_MODE}`);
+
+if (DIRECT_VLESS_MODE && PORT === ARGO_PORT) {
+  console.error('[init] SPEED_MODE=true with MULTI_MODE=false requires PORT and ARGO_PORT to be different');
+  process.exit(1);
+}
 
 function cleanRoutePath(value, fallback) {
   const clean = String(value || fallback).replace(/^\/+|\/+$/g, '');
   return clean || fallback;
+}
+
+function parseBool(value, defaultValue) {
+  if (value === undefined || value === '') return defaultValue;
+  return /^(1|true|yes|on)$/i.test(String(value));
 }
 
 function normalizeDomain(value) {
@@ -143,62 +157,64 @@ function runKoCommand() {
 }
 
 function generateConfig() {
+  const vlessInbound = {
+    type: 'vless',
+    tag: 'vless-ws-in',
+    listen: '127.0.0.1',
+    listen_port: DIRECT_VLESS_MODE ? ARGO_PORT : 3002,
+    users: [
+      {
+        name: NAME,
+        uuid: UUID,
+      },
+    ],
+    transport: {
+      type: 'ws',
+      path: '/vless-argo',
+    },
+  };
+  const inbounds = DIRECT_VLESS_MODE ? [vlessInbound] : [
+    vlessInbound,
+    {
+      type: 'vmess',
+      tag: 'vmess-ws-in',
+      listen: '127.0.0.1',
+      listen_port: 3003,
+      users: [
+        {
+          name: NAME,
+          uuid: UUID,
+          alterId: 0,
+        },
+      ],
+      transport: {
+        type: 'ws',
+        path: '/vmess-argo',
+      },
+    },
+    {
+      type: 'trojan',
+      tag: 'trojan-ws-in',
+      listen: '127.0.0.1',
+      listen_port: 3004,
+      users: [
+        {
+          name: NAME,
+          password: UUID,
+        },
+      ],
+      transport: {
+        type: 'ws',
+        path: '/trojan-argo',
+      },
+    },
+  ];
   const config = {
     log: {
       level: 'warn',
       timestamp: true,
     },
-    inbounds: [
-      {
-        type: 'vless',
-        tag: 'vless-ws-in',
-        listen: '127.0.0.1',
-        listen_port: 3002,
-        users: [
-          {
-            name: NAME,
-            uuid: UUID,
-          },
-        ],
-        transport: {
-          type: 'ws',
-          path: '/vless-argo',
-        },
-      },
-      {
-        type: 'vmess',
-        tag: 'vmess-ws-in',
-        listen: '127.0.0.1',
-        listen_port: 3003,
-        users: [
-          {
-            name: NAME,
-            uuid: UUID,
-            alterId: 0,
-          },
-        ],
-        transport: {
-          type: 'ws',
-          path: '/vmess-argo',
-        },
-      },
-      {
-        type: 'trojan',
-        tag: 'trojan-ws-in',
-        listen: '127.0.0.1',
-        listen_port: 3004,
-        users: [
-          {
-            name: NAME,
-            password: UUID,
-          },
-        ],
-        transport: {
-          type: 'ws',
-          path: '/trojan-argo',
-        },
-      },
-    ],
+    inbounds,
     outbounds: [
       {
         type: 'direct',
@@ -252,6 +268,7 @@ function buildSubscription() {
   const vmess = `vmess://${Buffer.from(JSON.stringify(vmessConfig)).toString('base64')}`;
   const trojan = `trojan://${UUID}@${CFIP}:${CFPORT}?security=tls&sni=${host}&fp=${FP}&type=ws&host=${host}&path=${trojanPath}#${nodeName}-trojan`;
 
+  if (DIRECT_VLESS_MODE) return vless;
   return [vless, vmess, trojan].join('\n');
 }
 
@@ -650,7 +667,6 @@ function subscriptionBaseUrl(req) {
 }
 
 app.get('/', (req, res) => {
-  const baseUrl = subscriptionBaseUrl(req);
   res.type('html').send(`<!doctype html>
 <html lang="en">
 <head>
@@ -667,10 +683,14 @@ app.get('/', (req, res) => {
   <p>sing-box: ${escapeHtml(singBoxStatus)}</p>
   <p>cloudflared: ${escapeHtml(cloudflaredStatus)}</p>
   <p>tunnel mode: ${escapeHtml(tunnelMode)}</p>
+  <p>speed mode: ${escapeHtml(String(SPEED_MODE))}</p>
+  <p>multi mode: ${escapeHtml(String(MULTI_MODE))}</p>
+  <p>main node: ${DIRECT_VLESS_MODE ? 'VLESS direct' : 'VLESS'}</p>
+  <p>backup nodes: ${DIRECT_VLESS_MODE ? 'disabled for speed' : 'VMess / Trojan'}</p>
   <p>ARGO_DOMAIN: ${escapeHtml(ARGO_DOMAIN || temporaryDomain || 'not ready')}</p>
   <p>CFIP: ${escapeHtml(CFIP)}</p>
-  <p>subscription: <code>${escapeHtml(`${baseUrl}/${SUB_PATH}`)}</code></p>
-  <p>raw: <code>${escapeHtml(`${baseUrl}/${SUB_PATH}/raw`)}</code></p>
+  <p>subscription: <code>/${escapeHtml(SUB_PATH)}</code></p>
+  <p>raw: <code>/${escapeHtml(SUB_PATH)}/raw</code></p>
 </body>
 </html>`);
 });
@@ -714,11 +734,14 @@ function listen(server, port, label) {
 }
 
 const mainServer = http.createServer(app);
-mainServer.on('upgrade', proxyWebSocket);
 
-if (PORT === ARGO_PORT) {
+if (DIRECT_VLESS_MODE) {
+  listen(mainServer, PORT, 'http server');
+} else if (PORT === ARGO_PORT) {
+  mainServer.on('upgrade', proxyWebSocket);
   listen(mainServer, PORT, 'http/argo server');
 } else {
+  mainServer.on('upgrade', proxyWebSocket);
   const argoServer = http.createServer(app);
   argoServer.on('upgrade', proxyWebSocket);
   listen(mainServer, PORT, 'http server');
