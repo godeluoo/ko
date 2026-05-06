@@ -15,34 +15,27 @@ if (process.platform !== 'linux' || process.arch !== 'x64') {
 
 const app = express();
 
-const UPLOAD_URL = process.env.UPLOAD_URL || '';
-const PROJECT_URL = process.env.PROJECT_URL || '';
-const AUTO_ACCESS = /^(1|true|yes|on)$/i.test(process.env.AUTO_ACCESS || '');
 const PORT = Number(process.env.SERVER_PORT || process.env.PORT || 3000);
-const FILE_PATH = process.env.FILE_PATH || '.tmp';
-const UUID = process.env.UUID || crypto.randomUUID();
+const ARGO_PORT = Number(process.env.ARGO_PORT || 8001);
+const UUID = process.env.UUID || '89c13786-25aa-4520-b2e7-12cd60fb5202';
 const ARGO_DOMAIN = normalizeDomain(process.env.ARGO_DOMAIN || '');
-const PUBLIC_SUB_DOMAIN = normalizeDomain(process.env.PUBLIC_SUB_DOMAIN || '');
 const ARGO_AUTH = (process.env.ARGO_AUTH || '').trim();
-const ARGO_PROTOCOL = normalizeProtocol(process.env.ARGO_PROTOCOL || 'http2');
-const EDGE_IP_VERSION = normalizeEdgeIpVersion(process.env.EDGE_IP_VERSION || 'auto');
 const CFIP = process.env.CFIP || 'saas.sin.fan';
 const CFPORT = String(process.env.CFPORT || '443');
-const FP = process.env.FP || 'chrome';
-const NAME = process.env.NAME || 'singbox-argo';
+const NAME = process.env.NAME || 'Vls';
+const FILE_PATH = process.env.FILE_PATH || '.tmp';
 const SUB_PATH = cleanRoutePath(process.env.SUB_PATH || 'sub', 'sub');
+const ARGO_PROTOCOL = normalizeProtocol(process.env.ARGO_PROTOCOL || 'http2');
+const EDGE_IP_VERSION = normalizeEdgeIpVersion(process.env.EDGE_IP_VERSION || 'auto');
+const FP = process.env.FP || 'chrome';
+const PUBLIC_SUB_DOMAIN = normalizeDomain(process.env.PUBLIC_SUB_DOMAIN || '');
 const FORCE_UPDATE = /^(1|true|yes|on)$/i.test(process.env.FORCE_UPDATE || '');
-
-if (!process.env.UUID) {
-  console.warn(`[warn] UUID is not set. Generated temporary UUID for this run: ${UUID}`);
-}
 
 const RUN_DIR = path.resolve(FILE_PATH);
 const webPath = path.join(RUN_DIR, 'sing-box');
 const botPath = path.join(RUN_DIR, 'cloudflared');
 const configPath = path.join(RUN_DIR, 'config.json');
 const subPath = path.join(RUN_DIR, 'sub.txt');
-const listPath = path.join(RUN_DIR, 'list.txt');
 const tunnelJsonPath = path.join(RUN_DIR, 'tunnel.json');
 const tunnelConfigPath = path.join(RUN_DIR, 'tunnel.yml');
 
@@ -54,17 +47,16 @@ const wsTargets = {
 
 let rawSubscription = '';
 let encodedSubscription = '';
+let temporaryDomain = '';
 let singBoxStatus = 'starting';
 let cloudflaredStatus = 'starting';
 let tunnelMode = detectTunnelMode();
-let temporaryDomain = '';
-let currentDomain = ARGO_DOMAIN;
 let restartRequested = false;
 
 fs.mkdirSync(RUN_DIR, { recursive: true });
 console.log(`[init] run directory: ${RUN_DIR}`);
-console.log(`[init] tunnel mode: ${tunnelMode}`);
-console.log(`[init] ARGO_PROTOCOL=${ARGO_PROTOCOL}, EDGE_IP_VERSION=${EDGE_IP_VERSION}`);
+console.log(`[init] PORT=${PORT}, ARGO_PORT=${ARGO_PORT}`);
+console.log(`[init] tunnel mode=${tunnelMode}, protocol=${ARGO_PROTOCOL}, edge-ip-version=${EDGE_IP_VERSION}`);
 console.log(`[init] FORCE_UPDATE=${FORCE_UPDATE}`);
 
 function cleanRoutePath(value, fallback) {
@@ -88,7 +80,7 @@ function normalizeProtocol(value) {
 
 function normalizeEdgeIpVersion(value) {
   const edge = String(value || 'auto').toLowerCase();
-  if (['4', '6', 'auto'].includes(edge)) return edge;
+  if (['auto', '4', '6'].includes(edge)) return edge;
   console.warn(`[warn] unsupported EDGE_IP_VERSION=${value}, fallback to auto`);
   return 'auto';
 }
@@ -96,8 +88,7 @@ function normalizeEdgeIpVersion(value) {
 function detectTunnelMode() {
   if (ARGO_AUTH.includes('TunnelSecret')) return 'json';
   if (ARGO_AUTH) return 'token';
-  if (!ARGO_AUTH && !ARGO_DOMAIN) return 'try';
-  return 'invalid';
+  return 'try';
 }
 
 function registerGetRoutes(routes, handler) {
@@ -114,55 +105,19 @@ function escapeHtml(value) {
   }[char]));
 }
 
-function maskUuid(value) {
-  if (!value || value.length < 12) return 'not set';
-  return `${value.slice(0, 8)}...${value.slice(-4)}`;
-}
-
-function formatBytes(bytes) {
-  if (!Number.isFinite(bytes)) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB'];
-  let size = bytes;
-  let unit = 0;
-  while (size >= 1024 && unit < units.length - 1) {
-    size /= 1024;
-    unit += 1;
-  }
-  return `${size.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
-}
-
-function formatMemoryUsage() {
-  const memory = process.memoryUsage();
-  return `rss ${formatBytes(memory.rss)}, heap ${formatBytes(memory.heapUsed)}/${formatBytes(memory.heapTotal)}`;
-}
-
-function formatUptime() {
-  const seconds = Math.floor(process.uptime());
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  return `${hours}h ${minutes}m ${seconds % 60}s`;
-}
-
-function yamlQuote(value) {
-  return JSON.stringify(String(value));
-}
-
 function sanitizeSudo(command) {
-  return command
-    .replace(/(^|[\s;&|()])sudo(\s+-[A-Za-z]+)*(?=\s)/g, '$1')
-    .replace(/[ \t]{2,}/g, ' ')
-    .trim();
+  return command.replace(/(^|[\s;&|()])sudo(\s+-[A-Za-z]+)*(?=\s)/g, '$1').trim();
 }
 
 function runKoCommand() {
-  const koCommand = (process.env.ko || '').trim();
+  const koCommand = (process.env.ko || process.env.KO || '').trim();
   if (!koCommand) {
     console.log('ko variable is empty, skip Komari agent');
     return Promise.resolve();
   }
 
   const command = sanitizeSudo(koCommand);
-  console.log('[ko] ko variable detected, running Komari agent command with bash');
+  console.log('[ko] ko variable detected, running user command with bash');
 
   return new Promise((resolve) => {
     const child = spawn('bash', ['-lc', command], {
@@ -178,58 +133,13 @@ function runKoCommand() {
     });
     child.on('close', (code) => {
       if (code === 0) {
-        console.log('[ko] Komari agent command finished');
+        console.log('[ko] command finished');
       } else {
-        console.error(`[ko] Komari agent command exited with code ${code}; continue startup`);
+        console.error(`[ko] command exited with code ${code}; continue startup`);
       }
       resolve();
     });
   });
-}
-
-function deleteOldUploadedNodes() {
-  if (!UPLOAD_URL || !fs.existsSync(subPath)) return;
-
-  try {
-    const fileContent = fs.readFileSync(subPath, 'utf-8');
-    const decoded = Buffer.from(fileContent, 'base64').toString('utf-8');
-    const nodes = decoded.split('\n').filter((line) => /^(vless|vmess|trojan):\/\//.test(line));
-    if (nodes.length === 0) return;
-
-    axios.post(`${UPLOAD_URL}/api/delete-nodes`, { nodes }, {
-      headers: { 'Content-Type': 'application/json' },
-      timeout: 15000,
-    }).then(() => {
-      console.log('[upload] old nodes deleted');
-    }).catch((error) => {
-      console.error(`[upload] delete old nodes failed: ${error.message}`);
-    });
-  } catch (error) {
-    console.error(`[upload] read old subscription failed: ${error.message}`);
-  }
-}
-
-function cleanupRuntimeFiles() {
-  const files = [
-    configPath,
-    tunnelJsonPath,
-    tunnelConfigPath,
-    path.join(RUN_DIR, 'sing-box.tar.gz'),
-  ];
-
-  for (const file of files) {
-    try {
-      fs.rmSync(file, { force: true });
-    } catch (error) {
-      console.error(`[cleanup] failed to remove ${file}: ${error.message}`);
-    }
-  }
-
-  try {
-    fs.rmSync(path.join(RUN_DIR, 'sing-box-extract'), { recursive: true, force: true });
-  } catch (error) {
-    console.error(`[cleanup] failed to remove extract directory: ${error.message}`);
-  }
 }
 
 function generateConfig() {
@@ -305,31 +215,26 @@ function generateConfig() {
   console.log(`[sing-box] config generated: ${configPath}`);
 }
 
-function getSubscriptionDomain() {
-  if (tunnelMode === 'invalid') return '';
-  if (tunnelMode === 'try') return temporaryDomain;
-  return currentDomain;
+function getNodeDomain() {
+  return ARGO_DOMAIN || temporaryDomain;
 }
 
-function getSubscriptionDisplayDomain() {
-  return PUBLIC_SUB_DOMAIN || getSubscriptionDomain();
+function getPublicSubscriptionDomain() {
+  return PUBLIC_SUB_DOMAIN || ARGO_DOMAIN || temporaryDomain;
 }
 
-function buildNodes() {
-  const host = getSubscriptionDomain();
-  if (!host) return null;
+function buildSubscription() {
+  const host = getNodeDomain();
+  if (!host) return '';
 
-  const prefix = NAME || 'singbox-argo';
-  const vlessName = encodeURIComponent(`${prefix}-vless`);
-  const vmessName = `${prefix}-vmess`;
-  const trojanName = encodeURIComponent(`${prefix}-trojan`);
-  const vlessPath = encodeURIComponent('/vless-argo?ed=2048');
+  const nodeName = encodeURIComponent(NAME || 'Vls');
+  const vlessPath = encodeURIComponent('/vless-argo');
   const trojanPath = encodeURIComponent('/trojan-argo');
 
-  const vless = `vless://${UUID}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${host}&fp=${FP}&type=ws&host=${host}&path=${vlessPath}#${vlessName}`;
+  const vless = `vless://${UUID}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${host}&fp=${FP}&type=ws&host=${host}&path=${vlessPath}#${nodeName}-vless`;
   const vmessConfig = {
     v: '2',
-    ps: vmessName,
+    ps: `${NAME}-vmess`,
     add: CFIP,
     port: CFPORT,
     id: UUID,
@@ -345,199 +250,22 @@ function buildNodes() {
     fp: FP,
   };
   const vmess = `vmess://${Buffer.from(JSON.stringify(vmessConfig)).toString('base64')}`;
-  const trojan = `trojan://${UUID}@${CFIP}:${CFPORT}?security=tls&sni=${host}&fp=${FP}&type=ws&host=${host}&path=${trojanPath}#${trojanName}`;
+  const trojan = `trojan://${UUID}@${CFIP}:${CFPORT}?security=tls&sni=${host}&fp=${FP}&type=ws&host=${host}&path=${trojanPath}#${nodeName}-trojan`;
 
-  return { host, vless, vmess, trojan };
+  return [vless, vmess, trojan].join('\n');
 }
 
 function refreshSubscriptionCache() {
-  const nodes = buildNodes();
-  if (!nodes) {
-    rawSubscription = '';
+  rawSubscription = buildSubscription();
+  if (!rawSubscription) {
     encodedSubscription = '';
-    if (tunnelMode === 'try') {
-      console.log('[sub] temporary tunnel domain not ready');
-    } else {
-      console.error('[sub] ARGO_DOMAIN is empty, subscription is not generated');
-    }
+    console.log('[sub] subscription domain not ready; set ARGO_DOMAIN for fixed tunnel');
     return;
   }
 
-  rawSubscription = [nodes.vless, nodes.vmess, nodes.trojan].join('\n');
   encodedSubscription = Buffer.from(rawSubscription).toString('base64');
   fs.writeFileSync(subPath, encodedSubscription);
-  fs.writeFileSync(listPath, rawSubscription);
-  console.log(`[sub] subscription domain: ${nodes.host}`);
   console.log(`[sub] subscription saved: ${subPath}`);
-  console.log(`[sub] raw nodes saved: ${listPath}`);
-}
-
-function buildSingBoxClientConfig() {
-  const nodes = buildNodes();
-  if (!nodes) return null;
-
-  return {
-    outbounds: [
-      {
-        type: 'vless',
-        tag: `${NAME}-vless`,
-        server: CFIP,
-        server_port: Number(CFPORT),
-        uuid: UUID,
-        tls: {
-          enabled: true,
-          server_name: nodes.host,
-          utls: {
-            enabled: true,
-            fingerprint: FP,
-          },
-        },
-        transport: {
-          type: 'ws',
-          path: '/vless-argo?ed=2048',
-          headers: {
-            Host: nodes.host,
-          },
-        },
-      },
-      {
-        type: 'vmess',
-        tag: `${NAME}-vmess`,
-        server: CFIP,
-        server_port: Number(CFPORT),
-        uuid: UUID,
-        security: 'auto',
-        alter_id: 0,
-        tls: {
-          enabled: true,
-          server_name: nodes.host,
-          utls: {
-            enabled: true,
-            fingerprint: FP,
-          },
-        },
-        transport: {
-          type: 'ws',
-          path: '/vmess-argo',
-          headers: {
-            Host: nodes.host,
-          },
-        },
-      },
-      {
-        type: 'trojan',
-        tag: `${NAME}-trojan`,
-        server: CFIP,
-        server_port: Number(CFPORT),
-        password: UUID,
-        tls: {
-          enabled: true,
-          server_name: nodes.host,
-          utls: {
-            enabled: true,
-            fingerprint: FP,
-          },
-        },
-        transport: {
-          type: 'ws',
-          path: '/trojan-argo',
-          headers: {
-            Host: nodes.host,
-          },
-        },
-      },
-    ],
-  };
-}
-
-function buildClashProxies() {
-  const nodes = buildNodes();
-  if (!nodes) return '';
-
-  const port = Number(CFPORT);
-  return [
-    'proxies:',
-    `  - name: ${yamlQuote(`${NAME}-vless`)}`,
-    '    type: vless',
-    `    server: ${yamlQuote(CFIP)}`,
-    `    port: ${port}`,
-    `    uuid: ${yamlQuote(UUID)}`,
-    '    network: ws',
-    '    tls: true',
-    '    udp: true',
-    `    servername: ${yamlQuote(nodes.host)}`,
-    `    client-fingerprint: ${yamlQuote(FP)}`,
-    '    ws-opts:',
-    '      path: /vless-argo?ed=2048',
-    '      headers:',
-    `        Host: ${yamlQuote(nodes.host)}`,
-    `  - name: ${yamlQuote(`${NAME}-vmess`)}`,
-    '    type: vmess',
-    `    server: ${yamlQuote(CFIP)}`,
-    `    port: ${port}`,
-    `    uuid: ${yamlQuote(UUID)}`,
-    '    alterId: 0',
-    '    cipher: auto',
-    '    network: ws',
-    '    tls: true',
-    '    udp: true',
-    `    servername: ${yamlQuote(nodes.host)}`,
-    `    client-fingerprint: ${yamlQuote(FP)}`,
-    '    ws-opts:',
-    '      path: /vmess-argo',
-    '      headers:',
-    `        Host: ${yamlQuote(nodes.host)}`,
-    `  - name: ${yamlQuote(`${NAME}-trojan`)}`,
-    '    type: trojan',
-    `    server: ${yamlQuote(CFIP)}`,
-    `    port: ${port}`,
-    `    password: ${yamlQuote(UUID)}`,
-    '    network: ws',
-    '    tls: true',
-    '    udp: true',
-    `    sni: ${yamlQuote(nodes.host)}`,
-    `    client-fingerprint: ${yamlQuote(FP)}`,
-    '    ws-opts:',
-    '      path: /trojan-argo',
-    '      headers:',
-    `        Host: ${yamlQuote(nodes.host)}`,
-    '',
-  ].join('\n');
-}
-
-async function uploadNodes() {
-  if (!rawSubscription) return;
-
-  if (UPLOAD_URL && PROJECT_URL) {
-    const subscriptionUrl = `${PROJECT_URL.replace(/\/+$/, '')}/${SUB_PATH}`;
-    try {
-      await axios.post(`${UPLOAD_URL}/api/add-subscriptions`, {
-        subscription: [subscriptionUrl],
-      }, {
-        headers: { 'Content-Type': 'application/json' },
-        timeout: 15000,
-      });
-      console.log('[upload] subscription uploaded successfully');
-    } catch (error) {
-      console.error(`[upload] subscription upload failed: ${error.message}`);
-    }
-    return;
-  }
-
-  if (UPLOAD_URL) {
-    const nodes = rawSubscription.split('\n').filter((line) => /^(vless|vmess|trojan):\/\//.test(line));
-    if (nodes.length === 0) return;
-
-    try {
-      await axios.post(`${UPLOAD_URL}/api/add-nodes`, { nodes }, {
-        headers: { 'Content-Type': 'application/json' },
-        timeout: 15000,
-      });
-      console.log('[upload] nodes uploaded successfully');
-    } catch (error) {
-      console.error(`[upload] nodes upload failed: ${error.message}`);
-    }
-  }
 }
 
 async function getLatestStableRelease(repo) {
@@ -669,17 +397,12 @@ function findFileRecursive(directory, fileName) {
 async function installSingBox() {
   if (!FORCE_UPDATE && isExecutable(webPath)) {
     console.log(`[sing-box] existing executable found: ${webPath}`);
-    console.log('[sing-box] reuse existing version:');
     try {
       await runCommand(webPath, ['version'], 'sing-box-version');
       return;
     } catch (error) {
       console.error(`[sing-box] existing executable check failed: ${error.message}; downloading again`);
     }
-  }
-
-  if (FORCE_UPDATE) {
-    console.log('[sing-box] FORCE_UPDATE=true, downloading latest stable release');
   }
 
   const release = await getLatestStableRelease('SagerNet/sing-box');
@@ -708,24 +431,18 @@ async function installSingBox() {
   fs.rmSync(archivePath, { force: true });
   fs.rmSync(extractDir, { recursive: true, force: true });
   console.log(`[sing-box] installed: ${webPath}`);
-  console.log('[sing-box] downloaded version:');
   await runCommand(webPath, ['version'], 'sing-box-version');
 }
 
 async function installCloudflared() {
   if (!FORCE_UPDATE && isExecutable(botPath)) {
     console.log(`[cloudflared] existing executable found: ${botPath}`);
-    console.log('[cloudflared] reuse existing version:');
     try {
       await runCommand(botPath, ['version'], 'cloudflared-version');
       return;
     } catch (error) {
       console.error(`[cloudflared] existing executable check failed: ${error.message}; downloading again`);
     }
-  }
-
-  if (FORCE_UPDATE) {
-    console.log('[cloudflared] FORCE_UPDATE=true, downloading latest release');
   }
 
   const release = await getLatestRelease('cloudflare/cloudflared');
@@ -738,7 +455,6 @@ async function installCloudflared() {
   console.log(`[cloudflared] latest release: ${release.tag_name}`);
   await downloadFile(asset.browser_download_url, botPath, 'cloudflared');
   console.log(`[cloudflared] installed: ${botPath}`);
-  console.log('[cloudflared] downloaded version:');
   await runCommand(botPath, ['version'], 'cloudflared-version');
 }
 
@@ -776,25 +492,12 @@ function writeTunnelConfig() {
     `protocol: ${ARGO_PROTOCOL}`,
     'ingress:',
     `  - hostname: ${ARGO_DOMAIN}`,
-    '    path: /vless-argo*',
-    '    service: http://127.0.0.1:3002',
-    `  - hostname: ${ARGO_DOMAIN}`,
-    '    path: /vmess-argo*',
-    '    service: http://127.0.0.1:3003',
-    `  - hostname: ${ARGO_DOMAIN}`,
-    '    path: /trojan-argo*',
-    '    service: http://127.0.0.1:3004',
-    `  - hostname: ${ARGO_DOMAIN}`,
-    '    path: /sub*',
-    '    service: http://127.0.0.1:3000',
-    `  - hostname: ${ARGO_DOMAIN}`,
-    '    service: http://127.0.0.1:3000',
+    `    service: http://127.0.0.1:${ARGO_PORT}`,
     '  - service: http_status:404',
     '',
   ].join('\n');
 
   fs.writeFileSync(tunnelConfigPath, tunnelYaml);
-  console.log(`[cloudflared] credentials saved: ${tunnelJsonPath}`);
   console.log(`[cloudflared] tunnel config generated: ${tunnelConfigPath}`);
 }
 
@@ -809,10 +512,8 @@ function updateTemporaryDomainFromLog(text) {
   if (!match || temporaryDomain === match[1]) return;
 
   temporaryDomain = match[1];
-  currentDomain = temporaryDomain;
   console.log(`[cloudflared] temporary tunnel domain: ${temporaryDomain}`);
   refreshSubscriptionCache();
-  uploadNodes().catch((error) => console.error(`[upload] upload after temporary domain failed: ${error.message}`));
 }
 
 function startProcess(label, command, args) {
@@ -880,9 +581,6 @@ function startCloudflared() {
   }
 
   if (tunnelMode === 'token') {
-    if (!ARGO_DOMAIN) {
-      console.warn('[cloudflared] token mode without ARGO_DOMAIN: tunnel can run, but subscription cannot know host/sni');
-    }
     startProcess('cloudflared', botPath, [
       'tunnel',
       '--edge-ip-version',
@@ -897,45 +595,17 @@ function startCloudflared() {
     return;
   }
 
-  if (tunnelMode === 'try') {
-    console.warn('[cloudflared] temporary tunnel mode is for testing only; domain may change after restart');
-    startProcess('cloudflared', botPath, [
-      'tunnel',
-      '--edge-ip-version',
-      EDGE_IP_VERSION,
-      '--no-autoupdate',
-      '--protocol',
-      ARGO_PROTOCOL,
-      '--url',
-      `http://127.0.0.1:${PORT}`,
-    ]);
-    return;
-  }
-
-  cloudflaredStatus = 'invalid config';
-  console.error('[cloudflared] invalid tunnel config: set both ARGO_DOMAIN and ARGO_AUTH for fixed tunnel, or leave both empty for temporary tunnel');
-}
-
-function startAutoAccess() {
-  if (!AUTO_ACCESS || !PROJECT_URL) {
-    console.log('[auto-access] skipped');
-    return;
-  }
-
-  const visit = async () => {
-    try {
-      await axios.get(PROJECT_URL, {
-        timeout: 15000,
-        headers: { 'User-Agent': 'nodejs-argo-auto-access' },
-      });
-      console.log('[auto-access] project url visited');
-    } catch (error) {
-      console.error(`[auto-access] visit failed: ${error.message}`);
-    }
-  };
-
-  visit();
-  setInterval(visit, 6 * 60 * 1000);
+  console.warn('[cloudflared] ARGO_AUTH is empty, using temporary tunnel for test only');
+  startProcess('cloudflared', botPath, [
+    'tunnel',
+    '--edge-ip-version',
+    EDGE_IP_VERSION,
+    '--no-autoupdate',
+    '--protocol',
+    ARGO_PROTOCOL,
+    '--url',
+    `http://127.0.0.1:${ARGO_PORT}`,
+  ]);
 }
 
 function proxyWebSocket(req, socket, head) {
@@ -973,68 +643,41 @@ function proxyWebSocket(req, socket, head) {
   socket.on('error', () => upstream.destroy());
 }
 
-function baseUrl(req) {
-  const host = getSubscriptionDisplayDomain();
+function subscriptionBaseUrl(req) {
+  const host = getPublicSubscriptionDomain();
   if (host) return `https://${host}`;
   return `http://${req.headers.host || `127.0.0.1:${PORT}`}`;
 }
 
 app.get('/', (req, res) => {
-  const origin = baseUrl(req);
-  const domain = getSubscriptionDomain() || 'not ready';
-  const subscriptionUrl = `${origin}/${SUB_PATH}`;
+  const baseUrl = subscriptionBaseUrl(req);
   res.type('html').send(`<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>singbox-argo</title>
+  <title>nodejs-argo</title>
   <style>
-    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem; line-height: 1.6; color: #1f2933; }
-    main { max-width: 840px; }
-    code { background: #f1f5f9; padding: .15rem .35rem; border-radius: 4px; }
-    table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
-    td, th { border-bottom: 1px solid #d8dee4; padding: .55rem .4rem; text-align: left; }
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem; line-height: 1.6; }
+    code { background: #f2f2f2; padding: .15rem .35rem; border-radius: 4px; }
   </style>
 </head>
 <body>
-  <main>
-    <h1>singbox-argo is running</h1>
-    <table>
-      <tr><th>Item</th><th>Value</th></tr>
-      <tr><td>app</td><td>ok</td></tr>
-      <tr><td>platform hint</td><td>Northflank-ready</td></tr>
-      <tr><td>arch</td><td>${escapeHtml(`${process.platform}/${process.arch}`)}</td></tr>
-      <tr><td>memory usage</td><td>${escapeHtml(formatMemoryUsage())}</td></tr>
-      <tr><td>uptime</td><td>${escapeHtml(formatUptime())}</td></tr>
-      <tr><td>sing-box</td><td>${escapeHtml(singBoxStatus)}</td></tr>
-      <tr><td>cloudflared</td><td>${escapeHtml(cloudflaredStatus)}</td></tr>
-      <tr><td>tunnel mode</td><td>${escapeHtml(tunnelMode)}</td></tr>
-      <tr><td>domain</td><td>${escapeHtml(domain)}</td></tr>
-      <tr><td>subscription URL</td><td>${escapeHtml(subscriptionUrl)}</td></tr>
-      <tr><td>recommended node</td><td>VLESS WS TLS</td></tr>
-      <tr><td>UUID</td><td>${escapeHtml(maskUuid(UUID))}</td></tr>
-      <tr><td>CFIP</td><td>${escapeHtml(CFIP)}</td></tr>
-      <tr><td>CFPORT</td><td>${escapeHtml(CFPORT)}</td></tr>
-      <tr><td>ARGO_PROTOCOL</td><td>${escapeHtml(ARGO_PROTOCOL)}</td></tr>
-      <tr><td>EDGE_IP_VERSION</td><td>${escapeHtml(EDGE_IP_VERSION)}</td></tr>
-    </table>
-    <h2>Subscriptions</h2>
-    <p><code>${escapeHtml(`${origin}/${SUB_PATH}`)}</code></p>
-    <p><code>${escapeHtml(`${origin}/${SUB_PATH}/raw`)}</code></p>
-    <p><code>${escapeHtml(`${origin}/${SUB_PATH}/sing-box`)}</code></p>
-    <p><code>${escapeHtml(`${origin}/${SUB_PATH}/clash`)}</code></p>
-  </main>
+  <h1>app ok</h1>
+  <p>sing-box: ${escapeHtml(singBoxStatus)}</p>
+  <p>cloudflared: ${escapeHtml(cloudflaredStatus)}</p>
+  <p>tunnel mode: ${escapeHtml(tunnelMode)}</p>
+  <p>ARGO_DOMAIN: ${escapeHtml(ARGO_DOMAIN || temporaryDomain || 'not ready')}</p>
+  <p>CFIP: ${escapeHtml(CFIP)}</p>
+  <p>subscription: <code>${escapeHtml(`${baseUrl}/${SUB_PATH}`)}</code></p>
+  <p>raw: <code>${escapeHtml(`${baseUrl}/${SUB_PATH}/raw`)}</code></p>
 </body>
 </html>`);
 });
 
 registerGetRoutes([`/${SUB_PATH}`, '/sub'], (req, res) => {
   if (!encodedSubscription) {
-    const message = tunnelMode === 'try'
-      ? 'temporary tunnel domain not ready'
-      : 'subscription is not ready; set ARGO_DOMAIN for host/sni';
-    res.status(503).type('text/plain; charset=utf-8').send(message);
+    res.status(503).type('text/plain; charset=utf-8').send('subscription domain not ready; set ARGO_DOMAIN');
     return;
   }
   res.type('text/plain; charset=utf-8').send(encodedSubscription);
@@ -1042,37 +685,10 @@ registerGetRoutes([`/${SUB_PATH}`, '/sub'], (req, res) => {
 
 registerGetRoutes([`/${SUB_PATH}/raw`, '/sub/raw'], (req, res) => {
   if (!rawSubscription) {
-    const message = tunnelMode === 'try'
-      ? 'temporary tunnel domain not ready'
-      : 'subscription is not ready; set ARGO_DOMAIN for host/sni';
-    res.status(503).type('text/plain; charset=utf-8').send(message);
+    res.status(503).type('text/plain; charset=utf-8').send('subscription domain not ready; set ARGO_DOMAIN');
     return;
   }
   res.type('text/plain; charset=utf-8').send(rawSubscription);
-});
-
-registerGetRoutes([`/${SUB_PATH}/sing-box`, '/sub/sing-box'], (req, res) => {
-  const config = buildSingBoxClientConfig();
-  if (!config) {
-    const message = tunnelMode === 'try'
-      ? 'temporary tunnel domain not ready'
-      : 'subscription is not ready; set ARGO_DOMAIN for host/sni';
-    res.status(503).type('text/plain; charset=utf-8').send(message);
-    return;
-  }
-  res.type('application/json; charset=utf-8').send(JSON.stringify(config, null, 2));
-});
-
-registerGetRoutes([`/${SUB_PATH}/clash`, '/sub/clash'], (req, res) => {
-  const yaml = buildClashProxies();
-  if (!yaml) {
-    const message = tunnelMode === 'try'
-      ? 'temporary tunnel domain not ready'
-      : 'subscription is not ready; set ARGO_DOMAIN for host/sni';
-    res.status(503).type('text/plain; charset=utf-8').send(message);
-    return;
-  }
-  res.type('text/yaml; charset=utf-8').send(yaml);
 });
 
 async function startserver() {
@@ -1080,32 +696,37 @@ async function startserver() {
     console.error(`[ko] unexpected error: ${error.message}`);
   });
 
-  deleteOldUploadedNodes();
-  cleanupRuntimeFiles();
   generateConfig();
   refreshSubscriptionCache();
 
   await installSingBox();
-  console.log('[sing-box] version before start:');
-  await runCommand(webPath, ['version'], 'sing-box-version');
   await runCommand(webPath, ['check', '-c', configPath], 'sing-box-check');
   startProcess('sing-box', webPath, ['run', '-c', configPath]);
 
   await installCloudflared();
-  console.log('[cloudflared] version before start:');
-  await runCommand(botPath, ['version'], 'cloudflared-version');
   startCloudflared();
-  await uploadNodes();
-  startAutoAccess();
 }
 
-const server = http.createServer(app);
-server.on('upgrade', proxyWebSocket);
-server.listen(PORT, () => {
-  console.log(`http server is running on port:${PORT}!`);
-  startserver().catch((error) => {
-    singBoxStatus = singBoxStatus === 'starting' ? 'startup failed' : singBoxStatus;
-    cloudflaredStatus = cloudflaredStatus === 'starting' ? 'startup failed' : cloudflaredStatus;
-    console.error(`[startup] ${error.stack || error.message}`);
+function listen(server, port, label) {
+  server.listen(port, () => {
+    console.log(`${label} is running on port:${port}`);
   });
+}
+
+const mainServer = http.createServer(app);
+mainServer.on('upgrade', proxyWebSocket);
+
+if (PORT === ARGO_PORT) {
+  listen(mainServer, PORT, 'http/argo server');
+} else {
+  const argoServer = http.createServer(app);
+  argoServer.on('upgrade', proxyWebSocket);
+  listen(mainServer, PORT, 'http server');
+  listen(argoServer, ARGO_PORT, 'argo ws server');
+}
+
+startserver().catch((error) => {
+  singBoxStatus = singBoxStatus === 'starting' ? 'startup failed' : singBoxStatus;
+  cloudflaredStatus = cloudflaredStatus === 'starting' ? 'startup failed' : cloudflaredStatus;
+  console.error(`[startup] ${error.stack || error.message}`);
 });
