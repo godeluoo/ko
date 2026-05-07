@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Node.js fixed Cloudflare Tunnel runner with sing-box and cloudflared",
   "main": "index.js",
-  "author": "eooce",
+  "author": "kang",
   "license": "MIT",
   "private": true,
   "scripts": {
