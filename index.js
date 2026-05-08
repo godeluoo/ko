@@ -174,9 +174,14 @@ function scheduleCleanup() {
 const NGINX_404 = '<html>\n<head><title>404 Not Found</title></head>\n<body>\n<center><h1>404 Not Found</h1></center>\n<hr><center>nginx/1.27.3</center>\n</body>\n</html>\n';
 
 app.get('/', (req, res) => {
+  app。get('/', (req, res) => {
+  res.removeHeader('X-Powered-By');
   res.status(404)
-    .set({ 'Server': 'nginx/1.27.3', 'Content-Type': 'text/html', 'Connection': 'keep-alive' })
-    .removeHeader('X-Powered-By')
+    .set({
+      'Server': 'nginx/1.27.3',
+      'Content-Type': 'text/html',
+      'Connection': 'keep-alive'
+    })
     .send(NGINX_404);
 });
 
