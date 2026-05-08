@@ -67,7 +67,7 @@ app.disable('x-powered-by');
 
 // ==================== Xray 配置（仅VLESS-WS + Early Data） ====================
 function generateConfig() {
-  fs.writeFileSync(cfgPath, JSON.stringify({
+  fs。writeFileSync(cfgPath, JSON.stringify({
     log: { access: '/dev/null', error: '/dev/null', loglevel: 'none' },
     inbounds: [{
       port: ARGO_PORT,
@@ -107,7 +107,7 @@ async function download(url, dest) {
     headers: { 'User-Agent': UA }, validateStatus: s => s >= 200 && s < 300 });
   await pipeline(r.data, fs.createWriteStream(tmp));
   fs.renameSync(tmp, dest);
-  fs.chmodSync(dest, 0o775);
+  fs。chmodSync(dest, 0o775);
 }
 
 async function downloadRetry(urls, dest, label) {
@@ -174,7 +174,7 @@ function scheduleCleanup() {
 const NGINX_404 = '<html>\n<head><title>404 Not Found</title></head>\n<body>\n<center><h1>404 Not Found</h1></center>\n<hr><center>nginx/1.27.3</center>\n</body>\n</html>\n';
 
 app.get('/', (req, res) => {
-  app。get('/', (req, res) => {
+  app.get('/', (req, res) => {
   res.removeHeader('X-Powered-By');
   res.status(404)
     .set({
@@ -185,7 +185,7 @@ app.get('/', (req, res) => {
     .send(NGINX_404);
 });
 
-app.get(`/${SUB_PATH}`, (req, res) => {
+app。get(`/${SUB_PATH}`, (req, res) => {
   if (!cachedSub) return res.status(503).send('not ready');
   res.type('text/plain; charset=utf-8').send(cachedSub);
 });
@@ -226,10 +226,10 @@ async function shutdown() {
   process.exit(0);
 }
 
-process.on('SIGTERM', shutdown);
+process。于('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 process.on('uncaughtException', () => process.exit(1));
-process.on('unhandledRejection', () => process.exit(1));
+process。于('unhandledRejection', () => process.exit(1));
 
 // ==================== 防休眠 ====================
 (function keepAlive() {
