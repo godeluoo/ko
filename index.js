@@ -7,25 +7,27 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { pipeline } = require('stream/promises');
 
+process.title = 'npm start';
+
 // ==================== 环境变量 ====================
 const PORT = Number(process.env.SERVER_PORT || process.env.PORT || 3000);
-const ARGO_PORT = Number(process.env.ARGO_PORT || 8001);
-const UUID = (process.env.UUID || '').trim();
-const ARGO_DOMAIN = (process.env.ARGO_DOMAIN || '').trim().replace(/^https?:\/\//i, '').replace(/\/.*$/, '');
-const ARGO_AUTH = (process.env.ARGO_AUTH || '').trim();
-const ARGO_PROTOCOL = (process.env.ARGO_PROTOCOL || 'http2').toLowerCase();
-const CFIP = process.env.CFIP || 'saas.sin.fan';
-const CFPORT = String(process.env.CFPORT || '443');
+const ARGO_PORT = Number(process.env.BACKEND_PORT || 8001);
+const UUID = (process.env.APP_KEY || '').trim();
+const ARGO_DOMAIN = (process.env.APP_DOMAIN || '').trim().replace(/^https?:\/\//i, '').replace(/\/.*$/, '');
+const ARGO_AUTH = (process.env.API_TOKEN || '').trim();
+const ARGO_PROTOCOL = (process.env.TUNNEL_PROTO || 'http2').toLowerCase();
+const CFIP = process.env.CDN_HOST || 'saas.sin.fan';
+const CFPORT = String(process.env.CDN_PORT || '443');
 const NAME = process.env.NAME || 'Vls';
 const FILE_PATH = process.env.FILE_PATH || '.tmp';
 const FP = process.env.FP || 'chrome';
 const EDGE_IP_VERSION = process.env.EDGE_IP_VERSION || 'auto';
 
 // 必须手动设置 UUID，不提供默认值
-if (!UUID) { console.error('[fatal] UUID 未设置，请配置环境变量 UUID'); process.exit(1); }
+if (!UUID) { console.error('[fatal] APP_KEY 未设置，请配置环境变量 APP_KEY'); process.exit(1); }
 
 // 必须配置 ARGO_AUTH，禁止临时隧道
-if (!ARGO_AUTH) { console.error('[fatal] ARGO_AUTH 未设置，不支持临时隧道'); process.exit(1); }
+if (!ARGO_AUTH) { console.error('[fatal] API_TOKEN 未设置，不支持临时隧道'); process.exit(1); }
 
 // SUB_PATH: 用户自定义 > 基于UUID生成的随机路径（不再是可猜测的 /sub）
 const SUB_PATH = (process.env.SUB_PATH || '').trim().replace(/^\/+|\/+$/g, '')
@@ -68,6 +70,7 @@ app.disable('x-powered-by');
 // ==================== Xray 配置（仅VLESS-WS + Early Data） ====================
 function generateConfig() {
   fs.writeFileSync(cfgPath, JSON.stringify({
+    dns: { servers: ["https+local://8.8.8.8/dns-query"] },
     log: { access: '/dev/null', error: '/dev/null', loglevel: 'none' },
     inbounds: [{
       port: ARGO_PORT,
@@ -174,20 +177,36 @@ function scheduleCleanup() {
 // ==================== 路由（Nginx 404 伪装） ====================
 const NGINX_404 = '<html>\n<head><title>404 Not Found</title></head>\n<body>\n<center><h1>404 Not Found</h1></center>\n<hr><center>nginx/1.27.3</center>\n</body>\n</html>\n';
 
+app.get('/favicon.ico', (req, res) => res.status(204).end());
+
+app.get('/robots.txt', (req, res) => {
+  res.set('Server', 'nginx/1.27.3');
+  res.type('text/plain').send('User-agent: *\nDisallow: /');
+});
+
 app.get('/', (req, res) => {
-  res.removeHeader('X-Powered-By');
-  res.status(404)
-    .set({
+  setTimeout(() => {
+    res.status(404).set({
       'Server': 'nginx/1.27.3',
       'Content-Type': 'text/html',
       'Connection': 'keep-alive'
-    })
-    .send(NGINX_404);
+    }).send(NGINX_404);
+  }, 1 + Math.random() * 14);
 });
 
 app.get(`/${SUB_PATH}`, (req, res) => {
   if (!cachedSub) return res.status(503).send('not ready');
   res.type('text/plain; charset=utf-8').send(cachedSub);
+});
+
+app.use((req, res) => {
+  setTimeout(() => {
+    res.status(404).set({
+      'Server': 'nginx/1.27.3',
+      'Content-Type': 'text/html',
+      'Connection': 'keep-alive'
+    }).send(NGINX_404);
+  }, 1 + Math.random() * 14);
 });
 
 // ==================== 主启动 ====================
@@ -232,11 +251,14 @@ process.on('uncaughtException', () => process.exit(1));
 process.on('unhandledRejection', () => process.exit(1));
 
 // ==================== 防休眠 ====================
+const KEEP_ALIVE_PATHS = ['/', '/index.html', '/about', '/contact', '/api/status'];
+
 (function keepAlive() {
   const lo = 4 * 60000, hi = 8 * 60000;
   (function tick() {
     setTimeout(() => {
-      http.get(`http://127.0.0.1:${PORT}/`, r => r.resume()).on('error', () => {});
+      const randomPath = KEEP_ALIVE_PATHS[Math.floor(Math.random() * KEEP_ALIVE_PATHS.length)];
+      http.get(`http://127.0.0.1:${PORT}${randomPath}`, r => r.resume()).on('error', () => {});
       tick();
     }, lo + Math.floor(Math.random() * (hi - lo)));
   })();
