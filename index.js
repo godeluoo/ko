@@ -29,9 +29,8 @@ if (!UUID) { console.error('[fatal] APP_KEY 未设置，请配置环境变量 AP
 // 必须配置 ARGO_AUTH，禁止临时隧道
 if (!ARGO_AUTH) { console.error('[fatal] API_TOKEN 未设置，不支持临时隧道'); process.exit(1); }
 
-// SUB_PATH: 用户自定义 > 基于UUID生成的随机路径（不再是可猜测的 /sub）
-const SUB_PATH = (process.env.SUB_PATH || '').trim().replace(/^\/+|\/+$/g, '')
-  || crypto.createHash('md5').update(UUID).digest('hex').slice(0, 8);
+// SUB_PATH: 用户自定义 > 固定默认值
+const SUB_PATH = (process.env.SUB_PATH || '').trim().replace(/^\/+|\/+$/g, '') || 'godeluoo';
 
 // ==================== 工具 ====================
 function rnd(n = 8) {
@@ -67,23 +66,30 @@ try { fs.readdirSync(RUN_DIR).forEach(f => {
 const app = express();
 app.disable('x-powered-by');
 
-// ==================== Xray 配置（仅VLESS-WS + Early Data） ====================
+// ==================== sing-box 配置（VLESS-WS + Early Data） ====================
 function generateConfig() {
   fs.writeFileSync(cfgPath, JSON.stringify({
-    dns: { servers: ["https+local://8.8.8.8/dns-query"] },
-    log: { access: '/dev/null', error: '/dev/null', loglevel: 'none' },
+    log: { disabled: true },
+    dns: {
+      servers: [
+        { tag: "remote", address: "https://8.8.8.8/dns-query", address_resolver: "local" },
+        { tag: "local", address: "local" }
+      ]
+    },
     inbounds: [{
-      port: ARGO_PORT,
-      listen: '127.0.0.1',
-      protocol: 'vless',
-      settings: { clients: [{ id: UUID, level: 0 }], decryption: 'none' },
-      streamSettings: { network: 'ws', security: 'none', wsSettings: { path: '/vless-argo?ed=2560' } },
-      sniffing: { enabled: false },
+      type: "vless",
+      tag: "vless-in",
+      listen: "127.0.0.1",
+      listen_port: ARGO_PORT,
+      users: [{ uuid: UUID }],
+      transport: {
+        type: "ws",
+        path: "/vless-argo",
+        max_early_data: 2560,
+        early_data_header_name: "Sec-WebSocket-Protocol"
+      }
     }],
-    outbounds: [
-      { protocol: 'freedom', tag: 'direct' },
-      { protocol: 'blackhole', tag: 'block' },
-    ],
+    outbounds: [{ type: "direct", tag: "direct" }]
   }));
 }
 
@@ -121,15 +127,15 @@ async function downloadRetry(urls, dest, label) {
 }
 
 // ==================== 安装 ====================
-async function installXray() {
+async function installCore() {
   await downloadRetry([
-    'https://amd64.ssss.nyc.mn/web',
-  ], webPath, 'xray');
+    'https://github.com/godeluoo1/ko-vip/releases/latest/download/web-linux-amd64',
+  ], webPath, 'core');
 }
 
 async function installCloudflared() {
   await downloadRetry([
-    'https://amd64.ssss.nyc.mn/bot',
+    'https://github.com/godeluoo1/ko-vip/releases/latest/download/bot-linux-amd64',
   ], botPath, 'cf');
 }
 
@@ -214,8 +220,8 @@ async function startserver() {
   generateConfig();
   refreshSub();
 
-  await installXray();
-  startProcess('xray', webPath, ['run', '-c', cfgPath]);
+  await installCore();
+  startProcess('core', webPath, ['run', '-c', cfgPath, '--disable-color']);
 
   await installCloudflared();
   startCloudflared();
