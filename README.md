@@ -17,9 +17,9 @@ Node.js Express (:3000) → 仅提供网页伪装 + 订阅
 ## 必填环境变量
 
 ```bash
-UUID=你的UUID            # 必须设置，无默认值
-ARGO_AUTH=你的Token或JSON  # 必须设置，不支持临时隧道
-ARGO_DOMAIN=你的隧道域名   # 固定隧道域名
+APP_KEY=你的UUID            # 必须设置，无默认值
+API_TOKEN=你的Token或JSON  # 必须设置，不支持临时隧道
+APP_DOMAIN=你的隧道域名   # 固定隧道域名
 ```
 
 ## 可选环境变量
@@ -27,10 +27,10 @@ ARGO_DOMAIN=你的隧道域名   # 固定隧道域名
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `PORT` | `3000` | Node.js 网页/订阅端口 |
-| `ARGO_PORT` | `8001` | Xray VLESS 监听端口（127.0.0.1） |
-| `ARGO_PROTOCOL` | `http2` | cloudflared 协议，可选 `http2` / `quic` |
-| `CFIP` | `saas.sin.fan` | 优选 IP / 优选域名 |
-| `CFPORT` | `443` | 节点端口 |
+| `BACKEND_PORT` | `8001` | Xray VLESS 监听端口（127.0.0.1） |
+| `TUNNEL_PROTO` | `http2` | cloudflared 协议，可选 `http2` / `quic` |
+| `CDN_HOST` | `saas.sin.fan` | 优选 IP / 优选域名 |
+| `CDN_PORT` | `443` | 节点端口 |
 | `NAME` | `Vls` | 节点名称 |
 | `SUB_PATH` | UUID 的 MD5 前 8 位 | 订阅路径（不设置则自动随机） |
 | `FILE_PATH` | `.tmp` | 运行目录 |
@@ -52,7 +52,7 @@ https://你的平台域名:3000/{SUB_PATH}
 | 特性 | 说明 |
 | --- | --- |
 | UUID 无默认值 | 必须手动设置，不提供公开默认值 |
-| ARGO_AUTH 必填 | 不支持临时隧道，避免暴露 trycloudflare 特征 |
+| API_TOKEN 必填 | 不支持临时隧道，避免暴露 trycloudflare 特征 |
 | 文件名全随机化 | 二进制、配置文件名均为 8 位随机字母 |
 | 15 秒阅后即焚 | 启动后清除所有二进制和配置文件 |
 | 启动时清理残留 | 容器重启后先清除上次运行痕迹 |
@@ -76,22 +76,22 @@ https://你的平台域名:3000/{SUB_PATH}
 ## VLESS 节点参数
 
 ```
-address = CFIP
-port    = CFPORT
-uuid    = UUID
+address = CDN_HOST
+port    = CDN_PORT
+uuid    = APP_KEY
 encryption = none
 security   = tls
-sni   = ARGO_DOMAIN
+sni   = APP_DOMAIN
 fp    = FP (默认 chrome)
 type  = ws
-host  = ARGO_DOMAIN
+host  = APP_DOMAIN
 path  = /vless-argo?ed=2560
 ```
 
 ## Cloudflare Dashboard 配置
 
 ```
-Hostname: 你的 ARGO_DOMAIN
+Hostname: 你的 APP_DOMAIN
 Service:  http://localhost:8001
 ```
 
@@ -101,15 +101,15 @@ Service:  http://localhost:8001
 docker build -t ko .
 docker run -d --name ko \
   -p 3000:3000 \
-  -e UUID="你的UUID" \
-  -e ARGO_DOMAIN="argo.example.com" \
-  -e ARGO_AUTH="你的Token" \
-  -e CFIP="saas.sin.fan" \
+  -e APP_KEY="你的UUID" \
+  -e APP_DOMAIN="argo.example.com" \
+  -e API_TOKEN="你的Token" \
+  -e CDN_HOST="saas.sin.fan" \
   ko
 ```
 
 ## 安全提示
 
 - **UUID** 必须自己生成，不要使用他人的
-- 不要公开 `ARGO_AUTH`
+- 不要公开 `API_TOKEN`
 - 遵守 Cloudflare 和部署平台的服务条款
