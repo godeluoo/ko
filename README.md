@@ -1,115 +1,48 @@
-# ko-main
+# ko-vip
 
-基于 [eooce/nodejs-argo](https://github.com/eooce/nodejs-argo) 的极致精简版。专为免费 PaaS 容器设计。
+自动编译 [sing-box](https://github.com/SagerNet/sing-box) 和 [cloudflared](https://github.com/cloudflare/cloudflared) 二进制文件，供 ko 主项目下载使用。
 
-## 架构
+## 用途
 
-```
-客户端 ← TLS → Cloudflare CDN ← CF Tunnel → cloudflared → Xray VLESS-WS (:8001) → 目标
+通过 GitHub Actions 自动拉取上游最新 Release 源码，编译为精简版二进制，并以固定文件名发布到 Release，方便 ko 主项目通过稳定 URL 下载。
 
-Node.js Express (:3000) → 仅提供网页伪装 + 订阅
-```
+## 编译产出
 
-- Node 不参与数据转发
-- cloudflared 直连 Xray
-- 仅 VLESS 单协议
+| 文件名 | 对应程序 | 架构 |
+|--------|----------|------|
+| `web-linux-amd64` | sing-box | linux/amd64 |
+| `web-linux-arm64` | sing-box | linux/arm64 |
+| `bot-linux-amd64` | cloudflared | linux/amd64 |
+| `bot-linux-arm64` | cloudflared | linux/arm64 |
 
-## 必填环境变量
+## 触发方式
 
-```bash
-APP_KEY=你的UUID            # 必须设置，无默认值
-API_TOKEN=你的Token或JSON  # 必须设置，不支持临时隧道
-APP_DOMAIN=你的隧道域名   # 固定隧道域名
-```
+- **手动触发**：`workflow_dispatch`，可在 Actions 页面手动运行
+- **定时触发**：每周一 UTC 02:00 自动执行（`cron: '0 2 * * 1'`）
 
-## 可选环境变量
+## 编译参数与优化
 
-| 变量 | 默认值 | 说明 |
-| --- | --- | --- |
-| `PORT` | `3000` | Node.js 网页/订阅端口 |
-| `BACKEND_PORT` | `8001` | Xray VLESS 监听端口（127.0.0.1） |
-| `TUNNEL_PROTO` | `http2` | cloudflared 协议，可选 `http2` / `quic` |
-| `CDN_HOST` | `saas.sin.fan` | 优选 IP / 优选域名 |
-| `CDN_PORT` | `443` | 节点端口 |
-| `NAME` | `Vls` | 节点名称 |
-| `SUB_PATH` | UUID 的 MD5 前 8 位 | 订阅路径（不设置则自动随机） |
-| `FILE_PATH` | `.tmp` | 运行目录 |
-| `FP` | `chrome` | TLS fingerprint |
-| `EDGE_IP_VERSION` | `auto` | cloudflared edge IP 版本 |
+| 参数 | 说明 |
+|------|------|
+| `CGO_ENABLED=0` | 纯静态编译，无 C 依赖，兼容所有 Linux 环境 |
+| `-trimpath` | 移除编译路径信息，消除本地路径泄露 |
+| `-ldflags="-s -w -buildid="` | 剥离符号表和调试信息，清空 buildid |
+| `-tags "with_utls"` | sing-box 启用 uTLS 指纹伪装支持 |
+| UPX `--best --lzma` | 极限压缩，大幅缩减二进制体积 |
 
-## 订阅
+## 在 ko 主项目中引用
+
+Release 下载地址格式：
 
 ```
-https://你的平台域名:3000/{SUB_PATH}
+https://github.com/godeluoo1/ko-vip/releases/latest/download/web-linux-amd64
+https://github.com/godeluoo1/ko-vip/releases/latest/download/bot-linux-amd64
 ```
 
-`SUB_PATH` 默认不是 `/sub`，而是基于 UUID 自动生成的 8 位随机路径。启动日志会打印实际路径。也可以通过环境变量 `SUB_PATH` 自定义。
+通过 `/releases/latest/download/` 路径始终指向最新编译版本，无需手动更新 URL。
 
-**订阅不写磁盘**，内容缓存在内存中。
+## 为什么要自编译
 
-## 安全特性
-
-| 特性 | 说明 |
-| --- | --- |
-| UUID 无默认值 | 必须手动设置，不提供公开默认值 |
-| API_TOKEN 必填 | 不支持临时隧道，避免暴露 trycloudflare 特征 |
-| 文件名全随机化 | 二进制、配置文件名均为 8 位随机字母 |
-| 15 秒阅后即焚 | 启动后清除所有二进制和配置文件 |
-| 启动时清理残留 | 容器重启后先清除上次运行痕迹 |
-| Nginx 404 伪装 | 首页返回标准 nginx/1.27.3 的 404 页面 |
-| Express 指纹移除 | 全局禁用 `X-Powered-By`，Server 头伪装为 nginx |
-| 订阅不留盘 | sub.txt 不写磁盘，纯内存缓存 |
-| 日志极简 | Xray `loglevel: none`，cloudflared `--loglevel fatal` |
-| V8 内存限制 | `--max-old-space-size=64` |
-
-## 稳定特性
-
-| 特性 | 说明 |
-| --- | --- |
-| 子进程退出 → exit(1) | 交给平台自动重启容器 |
-| 启动失败 → exit(1) | 不在错误状态下空转 |
-| uncaughtException → exit(1) | 未知异常直接重启 |
-| unhandledRejection → exit(1) | Promise 异常直接重启 |
-| SIGTERM/SIGINT | 优雅关闭子进程 |
-| 内置防休眠 | 4-8 分钟随机自保活 |
-
-## VLESS 节点参数
-
-```
-address = CDN_HOST
-port    = CDN_PORT
-uuid    = APP_KEY
-encryption = none
-security   = tls
-sni   = APP_DOMAIN
-fp    = FP (默认 chrome)
-type  = ws
-host  = APP_DOMAIN
-path  = /vless-argo?ed=2560
-```
-
-## Cloudflare Dashboard 配置
-
-```
-Hostname: 你的 APP_DOMAIN
-Service:  http://localhost:8001
-```
-
-## Docker
-
-```bash
-docker build -t ko .
-docker run -d --name ko \
-  -p 3000:3000 \
-  -e APP_KEY="你的UUID" \
-  -e APP_DOMAIN="argo.example.com" \
-  -e API_TOKEN="你的Token" \
-  -e CDN_HOST="saas.sin.fan" \
-  ko
-```
-
-## 安全提示
-
-- **UUID** 必须自己生成，不要使用他人的
-- 不要公开 `API_TOKEN`
-- 遵守 Cloudflare 和部署平台的服务条款
+- **唯一 Hash 防指纹**：每次编译产出的二进制 Hash 唯一，避免与官方发布版相同被特征识别
+- **精简体积快速启动**：剥离调试信息 + UPX 压缩，体积更小，部署下载更快
+- **最新版安全修复**：自动跟踪上游最新 Release，第一时间获取安全补丁和新功能
