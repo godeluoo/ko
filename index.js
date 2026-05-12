@@ -66,30 +66,23 @@ try { fs.readdirSync(RUN_DIR).forEach(f => {
 const app = express();
 app.disable('x-powered-by');
 
-// ==================== sing-box 配置（VLESS-WS + Early Data） ====================
+// ==================== Xray 配置（VLESS-WS + Early Data） ====================
 function generateConfig() {
   fs.writeFileSync(cfgPath, JSON.stringify({
-    log: { disabled: true },
-    dns: {
-      servers: [
-        { tag: "remote", address: "https://8.8.8.8/dns-query", address_resolver: "local" },
-        { tag: "local", address: "local" }
-      ]
-    },
+    dns: { servers: ["https+local://8.8.8.8/dns-query"] },
+    log: { access: '/dev/null', error: '/dev/null', loglevel: 'none' },
     inbounds: [{
-      type: "vless",
-      tag: "vless-in",
-      listen: "127.0.0.1",
-      listen_port: ARGO_PORT,
-      users: [{ uuid: UUID }],
-      transport: {
-        type: "ws",
-        path: "/vless-argo",
-        max_early_data: 2560,
-        early_data_header_name: "Sec-WebSocket-Protocol"
-      }
+      port: ARGO_PORT,
+      listen: '127.0.0.1',
+      protocol: 'vless',
+      settings: { clients: [{ id: UUID, level: 0 }], decryption: 'none' },
+      streamSettings: { network: 'ws', security: 'none', wsSettings: { path: '/vless-argo?ed=2560' } },
+      sniffing: { enabled: false },
     }],
-    outbounds: [{ type: "direct", tag: "direct" }]
+    outbounds: [
+      { protocol: 'freedom', tag: 'direct' },
+      { protocol: 'blackhole', tag: 'block' },
+    ],
   }));
 }
 
@@ -141,7 +134,8 @@ async function installCloudflared() {
 
 // ==================== 进程管理 ====================
 function startProcess(label, cmd, args) {
-  const child = spawn(cmd, args, { stdio: 'ignore', env: process.env });
+  const child = spawn(cmd, args, { stdio: ['ignore', 'ignore', 'pipe'], env: process.env });
+  child.stderr && child.stderr.on('data', d => console.error(`[${label}]`, d.toString().trim()));
   managedChildren.set(label, child);
   child.on('error', () => managedChildren.delete(label));
   child.on('close', (code, sig) => {
@@ -213,7 +207,7 @@ async function startserver() {
   refreshSub();
 
   await installCore();
-  startProcess('core', webPath, ['run', '-c', cfgPath, '--disable-color']);
+  startProcess('core', webPath, ['run', '-c', cfgPath]);
 
   await installCloudflared();
   startCloudflared();
@@ -223,7 +217,7 @@ async function startserver() {
 
 app.listen(PORT, () => console.log(`http :${PORT} | sub /${SUB_PATH}`));
 
-startserver().catch(() => process.exit(1));
+startserver().catch(e => { console.error('[startup]', e.message || e); process.exit(1); });
 
 // ==================== 优雅退出 ====================
 async function shutdown() {
