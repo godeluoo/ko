@@ -192,11 +192,7 @@ app.get('/robots.txt', (req, res) => {
 
 app.get('/', (req, res) => {
   setTimeout(() => {
-    res.status(404).set({
-      'Server': 'nginx/1.27.3',
-      'Content-Type': 'text/html',
-      'Connection': 'keep-alive'
-    }).send(NGINX_404);
+    try { if (!res.headersSent) res.status(404).set({ 'Server': 'nginx/1.27.3', 'Content-Type': 'text/html', 'Connection': 'keep-alive' }).send(NGINX_404); } catch (e) {}
   }, 1 + Math.random() * 14);
 });
 
@@ -207,11 +203,7 @@ app.get(`/${SUB_PATH}`, (req, res) => {
 
 app.use((req, res) => {
   setTimeout(() => {
-    res.status(404).set({
-      'Server': 'nginx/1.27.3',
-      'Content-Type': 'text/html',
-      'Connection': 'keep-alive'
-    }).send(NGINX_404);
+    try { if (!res.headersSent) res.status(404).set({ 'Server': 'nginx/1.27.3', 'Content-Type': 'text/html', 'Connection': 'keep-alive' }).send(NGINX_404); } catch (e) {}
   }, 1 + Math.random() * 14);
 });
 
