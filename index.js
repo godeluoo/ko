@@ -1,30 +1,39 @@
 const express = require('express');
-const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
-const { pipeline } = require('stream/promises');
 
 process.title = 'npm start';
 
-// ==================== 环境变量 ====================
+// ==================================================
+// 直接写死配置：你后续自己改这里
+// ==================================================
+const HARDCODED_APP_KEY = '6319305a-ce2e-45a9-84ab-c616f5ec3118';
+const HARDCODED_API_TOKEN = '把你的_API_TOKEN_粘贴到这里';
+const HARDCODED_APP_DOMAIN = 'node.chatgptaigode.eu.org';
+
+// ==================================================
+// 基础配置
+// ==================================================
 const PORT = Number(process.env.SERVER_PORT || process.env.PORT || 3000);
 const ARGO_PORT = Number(process.env.BACKEND_PORT || 8001);
 
-const UUID = (process.env.APP_KEY || '').trim();
-const ARGO_DOMAIN = (process.env.APP_DOMAIN || '')
+const UUID = HARDCODED_APP_KEY.trim();
+
+const ARGO_DOMAIN = HARDCODED_APP_DOMAIN
   .trim()
   .replace(/^https?:\/\//i, '')
   .replace(/\/.*$/, '');
 
-const ARGO_AUTH = (process.env.API_TOKEN || '').trim();
+const ARGO_AUTH = HARDCODED_API_TOKEN.trim();
+
 const ARGO_PROTOCOL = (process.env.TUNNEL_PROTO || 'http2').toLowerCase();
 
 const CFIP = process.env.CDN_HOST || 'saas.sin.fan';
 const CFPORT = String(process.env.CDN_PORT || '443');
-const NAME = process.env.NAME || 'Vls';
+const NAME = process.env.NAME || 'godeluoo';
 const FILE_PATH = process.env.FILE_PATH || '.tmp';
 const FP = process.env.FP || 'chrome';
 const EDGE_IP_VERSION = process.env.EDGE_IP_VERSION || 'auto';
@@ -32,23 +41,27 @@ const EDGE_IP_VERSION = process.env.EDGE_IP_VERSION || 'auto';
 const SUB_PATH =
   (process.env.SUB_PATH || '').trim().replace(/^\/+|\/+$/g, '') || 'godeluoo';
 
-// ==================== 必填检查 ====================
+// ==================================================
+// 必填检查
+// ==================================================
 if (!UUID) {
-  console.error('[fatal] APP_KEY 未设置，请配置环境变量 APP_KEY');
+  console.error('[fatal] APP_KEY 为空');
   process.exit(1);
 }
 
-if (!ARGO_AUTH) {
-  console.error('[fatal] API_TOKEN 未设置，请配置环境变量 API_TOKEN');
+if (!ARGO_AUTH || ARGO_AUTH === '把你的_API_TOKEN_粘贴到这里') {
+  console.error('[fatal] API_TOKEN 为空，请在代码顶部 HARDCODED_API_TOKEN 填入 token');
   process.exit(1);
 }
 
 if (!ARGO_DOMAIN) {
-  console.error('[fatal] APP_DOMAIN 未设置，请配置环境变量 APP_DOMAIN');
+  console.error('[fatal] APP_DOMAIN 为空');
   process.exit(1);
 }
 
-// ==================== 工具 ====================
+// ==================================================
+// 工具函数
+// ==================================================
 function rnd(n = 8) {
   const c = 'abcdefghijklmnopqrstuvwxyz';
   const b = crypto.randomBytes(n);
@@ -61,23 +74,34 @@ function rnd(n = 8) {
   return r;
 }
 
-// ==================== 路径 ====================
+// ==================================================
+// 路径
+// 这里改成使用镜像内置二进制，不再运行时下载
+// ==================================================
 const RUN_DIR = path.resolve(FILE_PATH);
-const webPath = path.join(RUN_DIR, rnd());
-const botPath = path.join(RUN_DIR, rnd());
+
+const webPath = '/app/bin/web-linux-amd64';
+const botPath = '/app/bin/bot-linux-amd64';
+
 const cfgPath = path.join(RUN_DIR, `${rnd(4)}.json`);
 const tunnelJsonPath = path.join(RUN_DIR, `${rnd(4)}.json`);
 const tunnelYmlPath = path.join(RUN_DIR, `${rnd(4)}.yml`);
 
-const cleanupFiles = [webPath, botPath, cfgPath, tunnelJsonPath, tunnelYmlPath];
+// 注意：不要把 webPath / botPath 放进 cleanupFiles
+// 否则 15 秒后会把二进制删掉
+const cleanupFiles = [cfgPath, tunnelJsonPath, tunnelYmlPath];
 
-// ==================== 状态 ====================
+// ==================================================
+// 状态
+// ==================================================
 let tunnelMode = ARGO_AUTH.includes('TunnelSecret') ? 'json' : 'token';
 const managedChildren = new Map();
 let isShuttingDown = false;
 let cachedSub = '';
 
-// ==================== 初始化 ====================
+// ==================================================
+// 初始化
+// ==================================================
 fs.mkdirSync(RUN_DIR, { recursive: true });
 
 try {
@@ -91,51 +115,66 @@ try {
 const app = express();
 app.disable('x-powered-by');
 
-// ==================== Xray 配置 ====================
+// ==================================================
+// Xray 配置
+// ==================================================
 function generateConfig() {
-  fs.writeFileSync(
-    cfgPath,
-    JSON.stringify({
-      dns: {
-        servers: ['https+local://8.8.8.8/dns-query'],
-      },
-      log: {
-        access: '/dev/null',
-        error: '/dev/null',
-        loglevel: 'none',
-      },
-      inbounds: [
-        {
-          port: ARGO_PORT,
-          listen: '127.0.0.1',
-          protocol: 'vless',
-          settings: {
-            clients: [{ id: UUID, level: 0 }],
-            decryption: 'none',
-          },
-          streamSettings: {
-            network: 'ws',
-            security: 'none',
-            wsSettings: {
-              path: '/vless-argo?ed=2560',
+  const config = {
+    dns: {
+      servers: ['https+local://8.8.8.8/dns-query'],
+    },
+    log: {
+      access: '/dev/null',
+      error: '/dev/null',
+      loglevel: 'none',
+    },
+    inbounds: [
+      {
+        port: ARGO_PORT,
+        listen: '127.0.0.1',
+        protocol: 'vless',
+        settings: {
+          clients: [
+            {
+              id: UUID,
+              level: 0,
             },
-          },
-          sniffing: {
-            enabled: false,
+          ],
+          decryption: 'none',
+        },
+        streamSettings: {
+          network: 'ws',
+          security: 'none',
+          wsSettings: {
+            path: '/vless-argo?ed=2560',
           },
         },
-      ],
-      outbounds: [
-        { protocol: 'freedom', tag: 'direct' },
-        { protocol: 'blackhole', tag: 'block' },
-      ],
-    })
-  );
+        sniffing: {
+          enabled: false,
+        },
+      },
+    ],
+    outbounds: [
+      {
+        protocol: 'freedom',
+        tag: 'direct',
+      },
+      {
+        protocol: 'blackhole',
+        tag: 'block',
+      },
+    ],
+  };
+
+  fs.writeFileSync(cfgPath, JSON.stringify(config));
 }
 
-// ==================== 订阅 ====================
+// ==================================================
+// 订阅
+// ==================================================
 function buildSub() {
   const host = ARGO_DOMAIN;
+
   if (!host) return '';
 
   const n = encodeURIComponent(NAME);
@@ -148,101 +187,32 @@ function refreshSub() {
   cachedSub = Buffer.from(buildSub()).toString('base64');
 }
 
-// ==================== 下载 ====================
-const UA =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-  '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
-
-async function download(url, dest) {
-  const tmp = `${dest}.dl`;
-  fs.rmSync(tmp, { force: true });
-
-  console.log(`[download] url=${url}`);
-
-  const r = await axios({
-    method: 'get',
-    url,
-    responseType: 'stream',
-    timeout: 120000,
-    maxRedirects: 10,
-    headers: {
-      'User-Agent': UA,
-      Accept: '*/*',
-    },
-    validateStatus: (s) => s >= 200 && s < 300,
-  });
-
-  await pipeline(r.data, fs.createWriteStream(tmp));
-
-  const stat = fs.statSync(tmp);
-  if (!stat.size || stat.size < 1024) {
-    throw new Error(`downloaded file too small: ${stat.size} bytes`);
+// ==================================================
+// 检查二进制文件
+// ==================================================
+function checkBinary(filePath, label) {
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`${label} not found: ${filePath}`);
   }
 
-  fs.renameSync(tmp, dest);
-  fs.chmodSync(dest, 0o775);
+  const stat = fs.statSync(filePath);
 
-  console.log(`[download] saved=${dest} size=${stat.size}`);
-}
-
-async function downloadRetry(urls, dest, label) {
-  let lastErr = '';
-
-  for (let i = 0; i < urls.length; i++) {
-    const url = urls[i];
-
-    try {
-      console.log(`[download] ${label} try ${i + 1}/${urls.length}`);
-      await download(url, dest);
-      console.log(`[download] ${label} ok`);
-      return;
-    } catch (e) {
-      lastErr = e.response
-        ? `HTTP ${e.response.status} ${e.response.statusText || ''}`
-        : `${e.code || ''} ${e.message || e}`;
-
-      console.error(`[download] ${label} failed: ${lastErr}`);
-
-      try {
-        fs.rmSync(`${dest}.dl`, { force: true });
-        fs.rmSync(dest, { force: true });
-      } catch (err) {}
-    }
+  if (!stat.isFile()) {
+    throw new Error(`${label} is not file: ${filePath}`);
   }
 
-  throw new Error(`${label}: all sources failed | last=${lastErr}`);
+  if (stat.size < 1024) {
+    throw new Error(`${label} file too small: ${stat.size} bytes`);
+  }
+
+  fs.chmodSync(filePath, 0o775);
+
+  console.log(`[binary] ${label} ready: ${filePath}, size=${stat.size}`);
 }
 
-// ==================== 安装 ====================
-async function installCore() {
-  await downloadRetry(
-    [
-      // 优先使用你自己的仓库 Release
-      'https://github.com/godeluoo/ko/releases/latest/download/web-linux-amd64',
-
-      // 备用原地址
-      'https://github.com/godeluoo1/ko-vip/releases/latest/download/web-linux-amd64',
-    ],
-    webPath,
-    'core'
-  );
-}
-
-async function installCloudflared() {
-  await downloadRetry(
-    [
-      // 优先使用你自己的仓库 Release
-      'https://github.com/godeluoo/ko/releases/latest/download/bot-linux-amd64',
-
-      // 备用原地址
-      'https://github.com/godeluoo1/ko-vip/releases/latest/download/bot-linux-amd64',
-    ],
-    botPath,
-    'cf'
-  );
-}
-
-// ==================== 进程管理 ====================
+// ==================================================
+// 进程管理
+// ==================================================
 function startProcess(label, cmd, args) {
   console.log(`[process] start ${label}: ${cmd} ${args.join(' ')}`);
 
@@ -271,14 +241,15 @@ function startProcess(label, cmd, args) {
 
     if (isShuttingDown) return;
 
-    // 子进程挂了，让平台重启容器
     process.exit(1);
   });
 
   return child;
 }
 
-// ==================== 隧道 ====================
+// ==================================================
+// Cloudflare Tunnel
+// ==================================================
 function startCloudflared() {
   const base = [
     'tunnel',
@@ -293,11 +264,16 @@ function startCloudflared() {
 
   if (tunnelMode === 'json') {
     const creds = JSON.parse(ARGO_AUTH);
+
     const tid =
       creds.TunnelID ||
       creds.tunnel_id ||
       creds.TunnelName ||
       creds.tunnel_name;
+
+    if (!tid) {
+      throw new Error('Tunnel JSON 缺少 TunnelID');
+    }
 
     fs.writeFileSync(tunnelJsonPath, ARGO_AUTH);
 
@@ -314,17 +290,29 @@ function startCloudflared() {
       ].join('\n')
     );
 
-    return startProcess('cf', botPath, [...base, '--config', tunnelYmlPath, 'run']);
+    return startProcess('cf', botPath, [
+      ...base,
+      '--config',
+      tunnelYmlPath,
+      'run',
+    ]);
   }
 
   if (tunnelMode === 'token') {
-    return startProcess('cf', botPath, [...base, 'run', '--token', ARGO_AUTH]);
+    return startProcess('cf', botPath, [
+      ...base,
+      'run',
+      '--token',
+      ARGO_AUTH,
+    ]);
   }
 
   throw new Error('unknown tunnel mode');
 }
 
-// ==================== 清理 ====================
+// ==================================================
+// 清理临时配置
+// ==================================================
 function scheduleCleanup() {
   setTimeout(() => {
     cleanupFiles.forEach((f) => {
@@ -335,7 +323,9 @@ function scheduleCleanup() {
   }, 15000);
 }
 
-// ==================== 路由 ====================
+// ==================================================
+// 路由
+// ==================================================
 const NGINX_404 =
   '<html>\n' +
   '<head><title>404 Not Found</title></head>\n' +
@@ -345,7 +335,9 @@ const NGINX_404 =
   '</body>\n' +
   '</html>\n';
 
-app.get('/favicon.ico', (req, res) => res.status(204).end());
+app.get('/favicon.ico', (req, res) => {
+  res.status(204).end();
+});
 
 app.get('/robots.txt', (req, res) => {
   res.set('Server', 'nginx/1.27.3');
@@ -370,7 +362,10 @@ app.get('/', (req, res) => {
 });
 
 app.get(`/${SUB_PATH}`, (req, res) => {
-  if (!cachedSub) return res.status(503).send('not ready');
+  if (!cachedSub) {
+    return res.status(503).send('not ready');
+  }
+
   res.type('text/plain; charset=utf-8').send(cachedSub);
 });
 
@@ -380,6 +375,7 @@ app.get('/healthz', (req, res) => {
     port: PORT,
     sub: `/${SUB_PATH}`,
     domain: ARGO_DOMAIN,
+    tunnelMode,
   });
 });
 
@@ -400,7 +396,9 @@ app.use((req, res) => {
   }, 1 + Math.random() * 14);
 });
 
-// ==================== 主启动 ====================
+// ==================================================
+// 主启动
+// ==================================================
 async function startserver() {
   console.log(`[env] PORT=${PORT}`);
   console.log(`[env] BACKEND_PORT=${ARGO_PORT}`);
@@ -412,10 +410,10 @@ async function startserver() {
   generateConfig();
   refreshSub();
 
-  await installCore();
-  startProcess('core', webPath, ['run', '-c', cfgPath]);
+  checkBinary(webPath, 'core');
+  checkBinary(botPath, 'cf');
 
-  await installCloudflared();
+  startProcess('core', webPath, ['run', '-c', cfgPath]);
   startCloudflared();
 
   scheduleCleanup();
@@ -432,9 +430,12 @@ startserver().catch((e) => {
   process.exit(1);
 });
 
-// ==================== 优雅退出 ====================
+// ==================================================
+// 优雅退出
+// ==================================================
 async function shutdown() {
   if (isShuttingDown) return;
+
   isShuttingDown = true;
 
   const ps = [];
@@ -480,8 +481,17 @@ process.on('unhandledRejection', (err) => {
   process.exit(1);
 });
 
-// ==================== 防休眠 ====================
-const KEEP_ALIVE_PATHS = ['/', '/index.html', '/about', '/contact', '/api/status', '/healthz'];
+// ==================================================
+// 防休眠
+// ==================================================
+const KEEP_ALIVE_PATHS = [
+  '/',
+  '/index.html',
+  '/about',
+  '/contact',
+  '/api/status',
+  '/healthz',
+];
 
 (function keepAlive() {
   const lo = 4 * 60000;
