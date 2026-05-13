@@ -11,7 +11,7 @@ process.title = 'npm start';
 // 直接写死配置：你后续自己改这里
 // ==================================================
 const HARDCODED_APP_KEY = '6319305a-ce2e-45a9-84ab-c616f5ec3118';
-const HARDCODED_API_TOKEN = '把你的_API_TOKEN_粘贴到这里';
+const HARDCODED_API_TOKEN = 'eyJhIjoiYTYxNjMxMzEwZWRiOTQ3MzVkNWM3OTExMmQyNTFkMGQiLCJ0IjoiY2VkNTIwNmMtNDkzMC00YzU0LWJkZTEtZGRjODEzZWE5MzkyIiwicyI6IlptTXhOakEwTkdZdE5tSTBaQzAwTmprMkxUaG1aRFF0Tm1Ka01qQTRaVEpqTVdRMiJ9';
 const HARDCODED_APP_DOMAIN = 'node.chatgptaigode.eu.org';
 
 // ==================================================
