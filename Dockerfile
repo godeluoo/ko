@@ -1,4 +1,4 @@
-FROM node:alpine
+FROM node:20-alpine
 
 WORKDIR /app
 
@@ -7,6 +7,6 @@ RUN npm install --omit=dev && npm cache clean --force
 
 COPY . .
 
-EXPOSE 3000/tcp
+EXPOSE 3000
 
-CMD ["node", "--max-old-space-size=64", "--optimize-for-size", "index.js"]
+CMD ["npm", "start"]
