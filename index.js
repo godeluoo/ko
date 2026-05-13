@@ -12,10 +12,16 @@ process.title = 'npm start';
 // ==================== 环境变量 ====================
 const PORT = Number(process.env.SERVER_PORT || process.env.PORT || 3000);
 const ARGO_PORT = Number(process.env.BACKEND_PORT || 8001);
+
 const UUID = (process.env.APP_KEY || '').trim();
-const ARGO_DOMAIN = (process.env.APP_DOMAIN || '').trim().replace(/^https?:\/\//i, '').replace(/\/.*$/, '');
+const ARGO_DOMAIN = (process.env.APP_DOMAIN || '')
+  .trim()
+  .replace(/^https?:\/\//i, '')
+  .replace(/\/.*$/, '');
+
 const ARGO_AUTH = (process.env.API_TOKEN || '').trim();
 const ARGO_PROTOCOL = (process.env.TUNNEL_PROTO || 'http2').toLowerCase();
+
 const CFIP = process.env.CDN_HOST || 'saas.sin.fan';
 const CFPORT = String(process.env.CDN_PORT || '443');
 const NAME = process.env.NAME || 'Vls';
@@ -23,22 +29,39 @@ const FILE_PATH = process.env.FILE_PATH || '.tmp';
 const FP = process.env.FP || 'chrome';
 const EDGE_IP_VERSION = process.env.EDGE_IP_VERSION || 'auto';
 
-// 必须手动设置 UUID，不提供默认值
-if (!UUID) { console.error('[fatal] APP_KEY 未设置，请配置环境变量 APP_KEY'); process.exit(1); }
+const SUB_PATH =
+  (process.env.SUB_PATH || '').trim().replace(/^\/+|\/+$/g, '') || 'godeluoo';
 
-// 必须配置 ARGO_AUTH，禁止临时隧道
-if (!ARGO_AUTH) { console.error('[fatal] API_TOKEN 未设置，不支持临时隧道'); process.exit(1); }
+// ==================== 必填检查 ====================
+if (!UUID) {
+  console.error('[fatal] APP_KEY 未设置，请配置环境变量 APP_KEY');
+  process.exit(1);
+}
 
-// SUB_PATH: 用户自定义 > 固定默认值
-const SUB_PATH = (process.env.SUB_PATH || '').trim().replace(/^\/+|\/+$/g, '') || 'godeluoo';
+if (!ARGO_AUTH) {
+  console.error('[fatal] API_TOKEN 未设置，请配置环境变量 API_TOKEN');
+  process.exit(1);
+}
+
+if (!ARGO_DOMAIN) {
+  console.error('[fatal] APP_DOMAIN 未设置，请配置环境变量 APP_DOMAIN');
+  process.exit(1);
+}
 
 // ==================== 工具 ====================
 function rnd(n = 8) {
-  const c = 'abcdefghijklmnopqrstuvwxyz', b = crypto.randomBytes(n);
-  let r = ''; for (let i = 0; i < n; i++) r += c[b[i] % c.length]; return r;
+  const c = 'abcdefghijklmnopqrstuvwxyz';
+  const b = crypto.randomBytes(n);
+  let r = '';
+
+  for (let i = 0; i < n; i++) {
+    r += c[b[i] % c.length];
+  }
+
+  return r;
 }
 
-// ==================== 路径（全随机化） ====================
+// ==================== 路径 ====================
 const RUN_DIR = path.resolve(FILE_PATH);
 const webPath = path.join(RUN_DIR, rnd());
 const botPath = path.join(RUN_DIR, rnd());
@@ -46,7 +69,6 @@ const cfgPath = path.join(RUN_DIR, `${rnd(4)}.json`);
 const tunnelJsonPath = path.join(RUN_DIR, `${rnd(4)}.json`);
 const tunnelYmlPath = path.join(RUN_DIR, `${rnd(4)}.yml`);
 
-// 阅后即焚清单（sub.txt 也包含在内，不留盘）
 const cleanupFiles = [webPath, botPath, cfgPath, tunnelJsonPath, tunnelYmlPath];
 
 // ==================== 状态 ====================
@@ -58,40 +80,67 @@ let cachedSub = '';
 // ==================== 初始化 ====================
 fs.mkdirSync(RUN_DIR, { recursive: true });
 
-// 启动时清理历史残留（容器重启后上次的二进制/配置可能还在）
-try { fs.readdirSync(RUN_DIR).forEach(f => {
-  try { fs.unlinkSync(path.join(RUN_DIR, f)); } catch (e) {}
-}); } catch (e) {}
+try {
+  fs.readdirSync(RUN_DIR).forEach((f) => {
+    try {
+      fs.unlinkSync(path.join(RUN_DIR, f));
+    } catch (e) {}
+  });
+} catch (e) {}
 
 const app = express();
 app.disable('x-powered-by');
 
-// ==================== Xray 配置（VLESS-WS + Early Data） ====================
+// ==================== Xray 配置 ====================
 function generateConfig() {
-  fs.writeFileSync(cfgPath, JSON.stringify({
-    dns: { servers: ["https+local://8.8.8.8/dns-query"] },
-    log: { access: '/dev/null', error: '/dev/null', loglevel: 'none' },
-    inbounds: [{
-      port: ARGO_PORT,
-      listen: '127.0.0.1',
-      protocol: 'vless',
-      settings: { clients: [{ id: UUID, level: 0 }], decryption: 'none' },
-      streamSettings: { network: 'ws', security: 'none', wsSettings: { path: '/vless-argo?ed=2560' } },
-      sniffing: { enabled: false },
-    }],
-    outbounds: [
-      { protocol: 'freedom', tag: 'direct' },
-      { protocol: 'blackhole', tag: 'block' },
-    ],
-  }));
+  fs.writeFileSync(
+    cfgPath,
+    JSON.stringify({
+      dns: {
+        servers: ['https+local://8.8.8.8/dns-query'],
+      },
+      log: {
+        access: '/dev/null',
+        error: '/dev/null',
+        loglevel: 'none',
+      },
+      inbounds: [
+        {
+          port: ARGO_PORT,
+          listen: '127.0.0.1',
+          protocol: 'vless',
+          settings: {
+            clients: [{ id: UUID, level: 0 }],
+            decryption: 'none',
+          },
+          streamSettings: {
+            network: 'ws',
+            security: 'none',
+            wsSettings: {
+              path: '/vless-argo?ed=2560',
+            },
+          },
+          sniffing: {
+            enabled: false,
+          },
+        },
+      ],
+      outbounds: [
+        { protocol: 'freedom', tag: 'direct' },
+        { protocol: 'blackhole', tag: 'block' },
+      ],
+    })
+  );
 }
 
-// ==================== 订阅（内存缓存，不留盘） ====================
+// ==================== 订阅 ====================
 function buildSub() {
   const host = ARGO_DOMAIN;
   if (!host) return '';
+
   const n = encodeURIComponent(NAME);
   const p = encodeURIComponent('/vless-argo?ed=2560');
+
   return `vless://${UUID}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${host}&fp=${FP}&type=ws&host=${host}&path=${p}#${n}`;
 }
 
@@ -100,82 +149,201 @@ function refreshSub() {
 }
 
 // ==================== 下载 ====================
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+const UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+  '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
 async function download(url, dest) {
   const tmp = `${dest}.dl`;
   fs.rmSync(tmp, { force: true });
-  const r = await axios({ method: 'get', url, responseType: 'stream', timeout: 120000,
-    headers: { 'User-Agent': UA }, validateStatus: s => s >= 200 && s < 300 });
+
+  console.log(`[download] url=${url}`);
+
+  const r = await axios({
+    method: 'get',
+    url,
+    responseType: 'stream',
+    timeout: 120000,
+    maxRedirects: 10,
+    headers: {
+      'User-Agent': UA,
+      Accept: '*/*',
+    },
+    validateStatus: (s) => s >= 200 && s < 300,
+  });
+
   await pipeline(r.data, fs.createWriteStream(tmp));
+
+  const stat = fs.statSync(tmp);
+  if (!stat.size || stat.size < 1024) {
+    throw new Error(`downloaded file too small: ${stat.size} bytes`);
+  }
+
   fs.renameSync(tmp, dest);
   fs.chmodSync(dest, 0o775);
+
+  console.log(`[download] saved=${dest} size=${stat.size}`);
 }
 
 async function downloadRetry(urls, dest, label) {
+  let lastErr = '';
+
   for (let i = 0; i < urls.length; i++) {
-    try { await download(urls[i], dest); return; } catch (e) {}
+    const url = urls[i];
+
+    try {
+      console.log(`[download] ${label} try ${i + 1}/${urls.length}`);
+      await download(url, dest);
+      console.log(`[download] ${label} ok`);
+      return;
+    } catch (e) {
+      lastErr = e.response
+        ? `HTTP ${e.response.status} ${e.response.statusText || ''}`
+        : `${e.code || ''} ${e.message || e}`;
+
+      console.error(`[download] ${label} failed: ${lastErr}`);
+
+      try {
+        fs.rmSync(`${dest}.dl`, { force: true });
+        fs.rmSync(dest, { force: true });
+      } catch (err) {}
+    }
   }
-  throw new Error(`${label}: all sources failed`);
+
+  throw new Error(`${label}: all sources failed | last=${lastErr}`);
 }
 
 // ==================== 安装 ====================
 async function installCore() {
-  await downloadRetry([
-    'https://github.com/godeluoo1/ko-vip/releases/latest/download/web-linux-amd64',
-  ], webPath, 'core');
+  await downloadRetry(
+    [
+      // 优先使用你自己的仓库 Release
+      'https://github.com/godeluoo/ko/releases/latest/download/web-linux-amd64',
+
+      // 备用原地址
+      'https://github.com/godeluoo1/ko-vip/releases/latest/download/web-linux-amd64',
+    ],
+    webPath,
+    'core'
+  );
 }
 
 async function installCloudflared() {
-  await downloadRetry([
-    'https://github.com/godeluoo1/ko-vip/releases/latest/download/bot-linux-amd64',
-  ], botPath, 'cf');
+  await downloadRetry(
+    [
+      // 优先使用你自己的仓库 Release
+      'https://github.com/godeluoo/ko/releases/latest/download/bot-linux-amd64',
+
+      // 备用原地址
+      'https://github.com/godeluoo1/ko-vip/releases/latest/download/bot-linux-amd64',
+    ],
+    botPath,
+    'cf'
+  );
 }
 
 // ==================== 进程管理 ====================
 function startProcess(label, cmd, args) {
-  const child = spawn(cmd, args, { stdio: ['ignore', 'ignore', 'pipe'], env: process.env });
-  child.stderr && child.stderr.on('data', d => console.error(`[${label}]`, d.toString().trim()));
+  console.log(`[process] start ${label}: ${cmd} ${args.join(' ')}`);
+
+  const child = spawn(cmd, args, {
+    stdio: ['ignore', 'ignore', 'pipe'],
+    env: process.env,
+  });
+
+  if (child.stderr) {
+    child.stderr.on('data', (d) => {
+      const msg = d.toString().trim();
+      if (msg) console.error(`[${label}]`, msg);
+    });
+  }
+
   managedChildren.set(label, child);
-  child.on('error', () => managedChildren.delete(label));
-  child.on('close', (code, sig) => {
+
+  child.on('error', (err) => {
+    console.error(`[process] ${label} error:`, err.message || err);
     managedChildren.delete(label);
+  });
+
+  child.on('close', (code, sig) => {
+    console.error(`[process] ${label} closed code=${code} sig=${sig}`);
+    managedChildren.delete(label);
+
     if (isShuttingDown) return;
-    // 子进程挂了 → 直接退出，让平台重启容器
+
+    // 子进程挂了，让平台重启容器
     process.exit(1);
   });
+
   return child;
 }
 
 // ==================== 隧道 ====================
 function startCloudflared() {
-  const base = ['tunnel', '--edge-ip-version', EDGE_IP_VERSION, '--no-autoupdate', '--loglevel', 'fatal', '--protocol', ARGO_PROTOCOL];
+  const base = [
+    'tunnel',
+    '--edge-ip-version',
+    EDGE_IP_VERSION,
+    '--no-autoupdate',
+    '--loglevel',
+    'fatal',
+    '--protocol',
+    ARGO_PROTOCOL,
+  ];
 
   if (tunnelMode === 'json') {
     const creds = JSON.parse(ARGO_AUTH);
-    const tid = creds.TunnelID || creds.tunnel_id || creds.TunnelName || creds.tunnel_name;
+    const tid =
+      creds.TunnelID ||
+      creds.tunnel_id ||
+      creds.TunnelName ||
+      creds.tunnel_name;
+
     fs.writeFileSync(tunnelJsonPath, ARGO_AUTH);
-    fs.writeFileSync(tunnelYmlPath, [
-      `tunnel: ${tid}`, `credentials-file: ${tunnelJsonPath}`, `protocol: ${ARGO_PROTOCOL}`,
-      'ingress:', `  - hostname: ${ARGO_DOMAIN}`, `    service: http://localhost:${ARGO_PORT}`, '  - service: http_status:404',
-    ].join('\n'));
+
+    fs.writeFileSync(
+      tunnelYmlPath,
+      [
+        `tunnel: ${tid}`,
+        `credentials-file: ${tunnelJsonPath}`,
+        `protocol: ${ARGO_PROTOCOL}`,
+        'ingress:',
+        `  - hostname: ${ARGO_DOMAIN}`,
+        `    service: http://localhost:${ARGO_PORT}`,
+        '  - service: http_status:404',
+      ].join('\n')
+    );
+
     return startProcess('cf', botPath, [...base, '--config', tunnelYmlPath, 'run']);
   }
 
   if (tunnelMode === 'token') {
     return startProcess('cf', botPath, [...base, 'run', '--token', ARGO_AUTH]);
   }
+
+  throw new Error('unknown tunnel mode');
 }
 
-// ==================== 阅后即焚（15秒后清除磁盘痕迹） ====================
+// ==================== 清理 ====================
 function scheduleCleanup() {
   setTimeout(() => {
-    cleanupFiles.forEach(f => { try { fs.rmSync(f, { force: true }); } catch (e) {} });
+    cleanupFiles.forEach((f) => {
+      try {
+        fs.rmSync(f, { force: true });
+      } catch (e) {}
+    });
   }, 15000);
 }
 
-// ==================== 路由（Nginx 404 伪装） ====================
-const NGINX_404 = '<html>\n<head><title>404 Not Found</title></head>\n<body>\n<center><h1>404 Not Found</h1></center>\n<hr><center>nginx/1.27.3</center>\n</body>\n</html>\n';
+// ==================== 路由 ====================
+const NGINX_404 =
+  '<html>\n' +
+  '<head><title>404 Not Found</title></head>\n' +
+  '<body>\n' +
+  '<center><h1>404 Not Found</h1></center>\n' +
+  '<hr><center>nginx/1.27.3</center>\n' +
+  '</body>\n' +
+  '</html>\n';
 
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 
@@ -186,7 +354,18 @@ app.get('/robots.txt', (req, res) => {
 
 app.get('/', (req, res) => {
   setTimeout(() => {
-    try { if (!res.headersSent) res.status(404).set({ 'Server': 'nginx/1.27.3', 'Content-Type': 'text/html', 'Connection': 'keep-alive' }).send(NGINX_404); } catch (e) {}
+    try {
+      if (!res.headersSent) {
+        res
+          .status(404)
+          .set({
+            Server: 'nginx/1.27.3',
+            'Content-Type': 'text/html',
+            Connection: 'keep-alive',
+          })
+          .send(NGINX_404);
+      }
+    } catch (e) {}
   }, 1 + Math.random() * 14);
 });
 
@@ -195,14 +374,41 @@ app.get(`/${SUB_PATH}`, (req, res) => {
   res.type('text/plain; charset=utf-8').send(cachedSub);
 });
 
+app.get('/healthz', (req, res) => {
+  res.status(200).json({
+    ok: true,
+    port: PORT,
+    sub: `/${SUB_PATH}`,
+    domain: ARGO_DOMAIN,
+  });
+});
+
 app.use((req, res) => {
   setTimeout(() => {
-    try { if (!res.headersSent) res.status(404).set({ 'Server': 'nginx/1.27.3', 'Content-Type': 'text/html', 'Connection': 'keep-alive' }).send(NGINX_404); } catch (e) {}
+    try {
+      if (!res.headersSent) {
+        res
+          .status(404)
+          .set({
+            Server: 'nginx/1.27.3',
+            'Content-Type': 'text/html',
+            Connection: 'keep-alive',
+          })
+          .send(NGINX_404);
+      }
+    } catch (e) {}
   }, 1 + Math.random() * 14);
 });
 
 // ==================== 主启动 ====================
 async function startserver() {
+  console.log(`[env] PORT=${PORT}`);
+  console.log(`[env] BACKEND_PORT=${ARGO_PORT}`);
+  console.log(`[env] APP_DOMAIN=${ARGO_DOMAIN}`);
+  console.log(`[env] SUB_PATH=/${SUB_PATH}`);
+  console.log(`[env] TUNNEL_PROTO=${ARGO_PROTOCOL}`);
+  console.log(`[env] tunnelMode=${tunnelMode}`);
+
   generateConfig();
   refreshSub();
 
@@ -213,44 +419,83 @@ async function startserver() {
   startCloudflared();
 
   scheduleCleanup();
+
+  console.log('[startup] ready');
 }
 
-app.listen(PORT, () => console.log(`http :${PORT} | sub /${SUB_PATH}`));
+app.listen(PORT, () => {
+  console.log(`http :${PORT} | sub /${SUB_PATH}`);
+});
 
-startserver().catch(e => { console.error('[startup]', e.message || e); process.exit(1); });
+startserver().catch((e) => {
+  console.error('[startup]', e.message || e);
+  process.exit(1);
+});
 
 // ==================== 优雅退出 ====================
 async function shutdown() {
   if (isShuttingDown) return;
   isShuttingDown = true;
+
   const ps = [];
+
   for (const [, child] of managedChildren) {
     if (child && !child.killed) {
-      ps.push(new Promise(r => {
-        const t = setTimeout(() => { try { child.kill('SIGKILL'); } catch (e) {} r(); }, 5000);
-        child.once('close', () => { clearTimeout(t); r(); });
-        try { child.kill('SIGTERM'); } catch (e) {}
-      }));
+      ps.push(
+        new Promise((r) => {
+          const t = setTimeout(() => {
+            try {
+              child.kill('SIGKILL');
+            } catch (e) {}
+            r();
+          }, 5000);
+
+          child.once('close', () => {
+            clearTimeout(t);
+            r();
+          });
+
+          try {
+            child.kill('SIGTERM');
+          } catch (e) {}
+        })
+      );
     }
   }
+
   await Promise.all(ps);
   process.exit(0);
 }
 
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
-process.on('uncaughtException', () => process.exit(1));
-process.on('unhandledRejection', () => process.exit(1));
+
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err.message || err);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (err) => {
+  console.error('[unhandledRejection]', err && err.message ? err.message : err);
+  process.exit(1);
+});
 
 // ==================== 防休眠 ====================
-const KEEP_ALIVE_PATHS = ['/', '/index.html', '/about', '/contact', '/api/status'];
+const KEEP_ALIVE_PATHS = ['/', '/index.html', '/about', '/contact', '/api/status', '/healthz'];
 
 (function keepAlive() {
-  const lo = 4 * 60000, hi = 8 * 60000;
+  const lo = 4 * 60000;
+  const hi = 8 * 60000;
+
   (function tick() {
     setTimeout(() => {
-      const randomPath = KEEP_ALIVE_PATHS[Math.floor(Math.random() * KEEP_ALIVE_PATHS.length)];
-      http.get(`http://127.0.0.1:${PORT}${randomPath}`, r => r.resume()).on('error', () => {});
+      const randomPath =
+        KEEP_ALIVE_PATHS[Math.floor(Math.random() * KEEP_ALIVE_PATHS.length)];
+
+      http
+        .get(`http://127.0.0.1:${PORT}${randomPath}`, (r) => r.resume())
+        .on('error', () => {});
+
       tick();
     }, lo + Math.floor(Math.random() * (hi - lo)));
   })();
